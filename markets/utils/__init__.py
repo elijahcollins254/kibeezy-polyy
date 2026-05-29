@@ -1,11 +1,6 @@
-"""
-Logarithmic Market Scoring Rule (LMSR) implementation.
+"""Market utilities package."""
 
-For backward compatibility, this module re-exports all price calculation formulas
-from the utils.price_calculations module. All formulas should be imported from there.
-"""
-
-from .utils.price_calculations import (
+from .price_calculations import (
     cost,
     price_yes,
     price_no,

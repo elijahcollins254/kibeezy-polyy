@@ -202,7 +202,7 @@ def financials_dashboard(request):
             
             for bet in winning_bets:
                 # Win: get back amount + profit (but lose to fees already taken)
-                payout = bet.amount + (bet.quantity * Decimal('100'))  # PAYOUT_PER_SHARE
+                payout = bet.amount + (bet.quantity * Decimal(str(PAYOUT_PER_SHARE)))
                 total_payouts_kes += payout
         
         # =================================================================
@@ -217,13 +217,13 @@ def financials_dashboard(request):
             # Simulate loss: if market resolves to NO (worst case for us)
             no_bets = Bet.objects.filter(market=market, outcome='No', action='BUY')
             no_potential_payout = no_bets.aggregate(
-                total=Sum(F('quantity') * Decimal('100'))
+                total=Sum(F('quantity') * Decimal(str(PAYOUT_PER_SHARE)))
             )['total'] or Decimal('0')
             
             # Simulate loss: if market resolves to YES
             yes_bets = Bet.objects.filter(market=market, outcome='Yes', action='BUY')
             yes_potential_payout = yes_bets.aggregate(
-                total=Sum(F('quantity') * Decimal('100'))
+                total=Sum(F('quantity') * Decimal(str(PAYOUT_PER_SHARE)))
             )['total'] or Decimal('0')
             
             # Worst case loss

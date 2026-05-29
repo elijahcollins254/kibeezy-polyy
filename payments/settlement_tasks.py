@@ -11,11 +11,11 @@ from markets.models import Market, Bet
 from payments.models import Transaction
 from users.models import CustomUser
 from payments.daraja_b2c import call_b2c, normalize_phone
+from markets.lmsr import PAYOUT_PER_SHARE
 
 logger = logging.getLogger(__name__)
 
-# LMSR payout model
-PAYOUT_PER_SHARE = Decimal('100')  # Fixed payout per share
+# Minimum payout threshold
 MIN_PAYOUT = Decimal('10')  # Don't send payouts < KES 10
 
 
@@ -27,9 +27,10 @@ def settle_market(self, market_id):
     Flow:
     1. Validate market is CLOSED and has resolved_outcome
     2. For each winning bet: payout = shares × 100 KES
-    3. Create payout transactions
-    4. Enqueue B2C calls
-    5. Mark market as RESOLVED
+    3. For each losing bet: payout = 0 KES
+    4. Create payout transactions
+    5. Enqueue B2C calls for winners
+    6. Mark market as RESOLVED
     
     Args:
         market_id: Market.id to settle
@@ -121,10 +122,16 @@ def settle_market(self, market_id):
                 
                 payout_amount_total += payout_amount
             
-            # Mark losing bets
+            # Mark losing bets - explicitly set payout to zero
             for bet in losing_bets:
                 bet.result = 'LOST'
+                bet.payout = Decimal('0')
                 bet.save()
+                
+                logger.info(
+                    f"Bet {bet.id} loser: "
+                    f"shares={Decimal(str(bet.quantity))}, payout=0"
+                )
             
             # Update market
             market.status = 'RESOLVED'

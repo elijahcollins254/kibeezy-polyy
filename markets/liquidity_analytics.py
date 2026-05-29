@@ -16,6 +16,7 @@ import math
 
 from .models import Market, LiquidityPool, LiquidityProvider, FeeDistribution, Bet
 from .lmsr import price_yes as calc_price_yes, price_no as calc_price_no
+from .utils.price_calculations import PAYOUT_PER_SHARE
 
 
 class LPDailySnapshot(models.Model):
@@ -79,11 +80,9 @@ def calculate_impermanent_loss(lp_provider: LiquidityProvider) -> dict:
     entry_price_yes = 0.5  # Approximation - would need historical data for accuracy
     entry_price_no = 0.5
     
-    PAYOUT = 100  # Per share
-    
     # Current position value
-    current_position_yes = lp_provider.yes_shares_owned * current_price_yes * PAYOUT
-    current_position_no = lp_provider.no_shares_owned * current_price_no * PAYOUT
+    current_position_yes = lp_provider.yes_shares_owned * current_price_yes * PAYOUT_PER_SHARE
+    current_position_no = lp_provider.no_shares_owned * current_price_no * PAYOUT_PER_SHARE
     current_total = current_position_yes + current_position_no
     
     # HODL value (if they had just held the capital)

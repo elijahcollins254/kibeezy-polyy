@@ -8,6 +8,7 @@ from .models import Market, Bet
 from payments.models import Transaction
 from users.models import CustomUser
 from api.validators import normalize_phone_number
+from .utils.price_calculations import PAYOUT_PER_SHARE
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +141,7 @@ def user_dashboard(request):
                 winning_prob = 1.0 - market_price
             
             # Position value = net_quantity * max_payout * probability
-            max_payout = Decimal('100')  # 100 KES per share
-            position_value = Decimal(str(net_quantity)) * max_payout * Decimal(str(winning_prob))
+            position_value = Decimal(str(net_quantity)) * Decimal(str(PAYOUT_PER_SHARE)) * Decimal(str(winning_prob))
             portfolio_value += position_value
         
         # Get user statistics

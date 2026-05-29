@@ -27,6 +27,7 @@ from .lmsr import (
     price_no as calc_price_no,
     cost as calc_cost,
 )
+from .utils.price_calculations import PAYOUT_PER_SHARE
 
 # ============================================================================
 # CONFIGURATION CONSTANTS
@@ -41,9 +42,6 @@ WITHDRAWAL_FEE_PERCENT = 0.1  # 0.1% on withdrawal
 EARLY_WITHDRAWAL_PENALTY = 0.02  # 2% if withdrawn within 7 days
 
 EARLY_WITHDRAWAL_LOCKUP_DAYS = 7  # Lockup period for penalty-free withdrawal
-
-# Payout per share (must match trading constants)
-PAYOUT_PER_SHARE = 100
 
 
 # ============================================================================

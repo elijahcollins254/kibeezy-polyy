@@ -18,10 +18,8 @@ from .lmsr import (
     price_no,
     calculate_cost_to_buy_shares,
     calculate_payout_from_selling,
+    PAYOUT_PER_SHARE,
 )
-
-# Fixed payout per share in KES
-PAYOUT_PER_SHARE = 100
 
 # Import LP configuration and service
 try:

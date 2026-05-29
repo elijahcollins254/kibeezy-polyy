@@ -4,6 +4,8 @@ Liquidity Provider Configuration Constants
 Central configuration for all liquidity provision system parameters.
 """
 
+from .utils.price_calculations import PAYOUT_PER_SHARE
+
 # ============================================================================
 # LMSR PARAMETERS
 # ============================================================================
@@ -12,10 +14,6 @@ Central configuration for all liquidity provision system parameters.
 # Higher B = more liquidity, less slippage, flatter price curve
 # Lower B = less liquidity, more slippage, steeper price curve
 DEFAULT_LIQUIDITY_PARAMETER_B = 100.0
-
-# Payout per share in KES
-# Used in LMSR cost calculations: Cost = (C_after - C_before) * PAYOUT_PER_SHARE
-PAYOUT_PER_SHARE = 100
 
 
 # ============================================================================

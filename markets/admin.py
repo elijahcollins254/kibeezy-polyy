@@ -3,7 +3,7 @@ from django.utils.safestring import mark_safe
 from django import forms
 from decimal import Decimal
 from .models import Market, Bet, PriceHistory, ChatMessage
-import math
+from .lmsr import price_yes, calculate_q_for_probability
 
 
 class MarketAdminForm(forms.ModelForm):
@@ -60,9 +60,7 @@ class MarketAdmin(admin.ModelAdmin):
         """Show current q values and corresponding price"""
         if obj.q_yes is not None and obj.q_no is not None and obj.b:
             try:
-                exp_yes = math.exp(float(obj.q_yes) / float(obj.b))
-                exp_no = math.exp(float(obj.q_no) / float(obj.b))
-                prob = exp_yes / (exp_yes + exp_no) * 100
+                prob = price_yes(float(obj.q_yes), float(obj.q_no), float(obj.b)) * 100
                 return f"q_yes={obj.q_yes:.2f}, q_no={obj.q_no:.2f} → {prob:.1f}% YES"
             except:
                 return "Error calculating price"
@@ -80,10 +78,8 @@ class MarketAdmin(admin.ModelAdmin):
             
             b = float(obj.b) if obj.b else 100.0
             
-            # LMSR: (q_yes - q_no) = b * ln(P_yes / P_no)
-            # We set q_no=0, so: q_yes = b * ln(P_yes / P_no)
-            prob_ratio = yes_prob / (1 - yes_prob)
-            obj.q_yes = b * math.log(prob_ratio)
+            # Use the centralized formula function
+            obj.q_yes = calculate_q_for_probability(yes_prob, b)
             obj.q_no = 0.0
         
         super().save_model(request, obj, form, change)

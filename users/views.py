@@ -10,6 +10,7 @@ from django.middleware.csrf import get_token
 from .models import CustomUser
 from api.validators import validate_phone_number, validate_password, validate_full_name, normalize_phone_number, ValidationError
 from notifications.views import create_notification
+from markets.utils.price_calculations import PAYOUT_PER_SHARE
 
 logger = logging.getLogger(__name__)
 
@@ -708,8 +709,8 @@ def admin_get_user_portfolio(request, user_id):
                 else:
                     current_prob = market.yes_probability / 100  # Simplified
                 
-                # Current position value = net_quantity * 100 * probability
-                current_value = net_quantity * 100 * current_prob
+                # Current position value = net_quantity * PAYOUT_PER_SHARE * probability
+                current_value = net_quantity * PAYOUT_PER_SHARE * current_prob
                 pnl = current_value - pos['total_cost']
                 
                 total_portfolio_value += current_value
