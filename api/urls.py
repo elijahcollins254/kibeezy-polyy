@@ -22,7 +22,7 @@ from api.views import get_csrf_token
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('health/', health_check, name='health_check'),
+    path('api/health/', health_check, name='health_check'),
     path('api/csrf-token/', get_csrf_token, name='csrf_token'),
 
     path('api/auth/', include('users.urls')),
