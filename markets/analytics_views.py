@@ -144,7 +144,7 @@ def analytics_dashboard(request):
             by_category[category] = {
                 'volume': float(cat_bets['volume'] or 0),
                 'markets': cat_bets['count'] or 0,
-                'commission': float((cat_bets['volume'] or 0) * COMMISSION_RATE)
+                'commission': float(cat_bets['volume'] or 0) * COMMISSION_RATE
             }
         
         # Top markets by volume
@@ -162,7 +162,7 @@ def analytics_dashboard(request):
                     'volume': volume,
                     'yes_probability': market.yes_probability,
                     'status': market.status,
-                    'commission': volume * COMMISSION_RATE,
+                    'commission': float(volume * COMMISSION_RATE),
                     'category': market.category,
                 })
         
