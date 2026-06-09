@@ -16,7 +16,11 @@ from .transaction_safety import (
 from api.validators import validate_amount, normalize_phone_number, ValidationError
 from users.models import CustomUser
 from notifications.views import create_notification
-
+from brokerage.services.ledger import (
+    record_deposit_and_update_balance,
+    record_withdrawal_success_and_update_balance,
+    record_withdrawal_reversal_and_update_balance,
+)
 logger = logging.getLogger(__name__)
 
 @csrf_exempt
@@ -375,61 +379,94 @@ def b2c_result_callback(request):
             if tx.status == 'COMPLETED':
                 logger.info(f"Transaction {tx.id} already marked COMPLETED, skipping")
                 return JsonResponse({'status': 'ok', 'message': 'already_processed'})
-            
+
             if is_success:
                 # Payment successful
                 logger.info(f"B2C payout success for transaction {tx.id}, recipient {tx.user.phone_number}")
-                
+
+                # Record ledger withdrawal and update user.balance atomically
+                try:
+                    ledger_tx, updated_balance = record_withdrawal_success_and_update_balance(
+                        tx.user,
+                        tx.amount,
+                        reference=f"payments:{tx.id}",
+                        metadata={'payments_tx': tx.id}
+                    )
+                except Exception as e:
+                    logger.error(f"Ledger withdrawal recording failed: {e}")
+                    # Mark transaction failed for manual review
+                    tx.status = 'FAILED'
+                    tx.mpesa_response = tx.mpesa_response or {}
+                    tx.mpesa_response.update({
+                        'callback_success': False,
+                        'callback_result_code': result_code,
+                        'callback_description': f"Ledger write failed: {e}",
+                        'callback_time': timezone.now().isoformat()
+                    })
+                    tx.save()
+                    return JsonResponse({'status': 'error', 'message': 'ledger_failure'}, status=200)
+
+                # Update payment transaction
                 tx.status = 'COMPLETED'
                 tx.mpesa_response = tx.mpesa_response or {}
                 tx.mpesa_response.update({
                     'callback_success': True,
                     'callback_result_code': result_code,
                     'callback_description': response_description,
-                    'callback_time': timezone.now().isoformat()
+                    'callback_time': timezone.now().isoformat(),
+                    'ledger_tx_id': getattr(ledger_tx, 'id', None),
                 })
                 tx.save()
-                
-                # NOW deduct balance upon successful callback confirmation
-                user = tx.user
-                user.balance -= tx.amount
-                user.save()
-                
+
                 logger.info(
                     f"Withdrawal completed and balance deducted: tx_id={tx.id}, user={tx.user.phone_number}, "
-                    f"amount={tx.amount}, new_balance={user.balance}"
+                    f"amount={tx.amount}, new_balance={updated_balance}"
                 )
-                
+
                 # Send notification
                 _send_payout_notification(tx.user, tx)
-            
+
             else:
                 # Payment failed
                 logger.warning(
                     f"B2C payout failed for transaction {tx.id}, code={result_code}, "
                     f"description={response_description}"
                 )
-                
+
+                # Attempt to record reversal in ledger and update balance atomically
+                reversal_meta = {}
+                try:
+                    reversal_tx = record_withdrawal_reversal_and_update_balance(
+                        tx.user,
+                        tx.amount,
+                        reference=f"payments_reversal:{tx.id}",
+                        metadata={'payments_tx': tx.id}
+                    )
+                    # function returns (tx, updated_balance) in our implementation
+                    if isinstance(reversal_tx, tuple):
+                        reversal_tx_obj = reversal_tx[0]
+                    else:
+                        reversal_tx_obj = reversal_tx
+                    reversal_meta['ledger_reversal_id'] = getattr(reversal_tx_obj, 'id', None)
+                except Exception as e:
+                    logger.error(f"Failed to record withdrawal reversal in ledger: {e}")
+                    reversal_meta['reversal_error'] = str(e)
+
                 tx.status = 'FAILED'
                 tx.mpesa_response = tx.mpesa_response or {}
                 tx.mpesa_response.update({
                     'callback_success': False,
                     'callback_result_code': result_code,
                     'callback_description': response_description,
-                    'callback_time': timezone.now().isoformat()
+                    'callback_time': timezone.now().isoformat(),
+                    **reversal_meta,
                 })
                 tx.save()
-                
-                # Refund user balance since payout failed
-                user = tx.user
-                user.balance += tx.amount
-                user.save()
-                
+
                 logger.info(
-                    f"User {user.phone_number} refunded KES {tx.amount} due to failed payout, "
-                    f"new balance: {user.balance}"
+                    f"User {tx.user.phone_number} refunded KES {tx.amount} due to failed payout"
                 )
-                
+
                 # Log for manual review / retry
                 logger.error(
                     f"Payout failed: tx_id={tx.id}, user={tx.user.phone_number}, "
@@ -595,37 +632,44 @@ def mpesa_callback(request):
                 return JsonResponse({'status': 'success', 'message': 'Transaction already processed'}, status=200)
             
             if result.get('status') == 'COMPLETED':
-                # Payment successful - update existing transaction and user balance atomically
+                # Payment successful - record ledger deposit and sync user.balance atomically
                 try:
                     from django.db import transaction as db_transaction
                     with db_transaction.atomic():
                         user = transaction.user
-                        
+
                         # Verify user is active
                         if not user.is_active:
-                            raise TransactionError(f"User account is inactive")
-                        
-                        # Update user balance atomically
-                        user.balance += transaction.amount
-                        user.save(update_fields=['balance'])
-                        
-                        # Update existing transaction record
+                            raise TransactionError("User account is inactive")
+
+                        try:
+                            ledger_tx, updated_balance = record_deposit_and_update_balance(
+                                user,
+                                transaction.amount,
+                                reference=f"payments:{transaction.id}",
+                                metadata={'payments_tx': transaction.id}
+                            )
+                        except Exception as e:
+                            raise TransactionError(f"Ledger deposit failed: {e}")
+
+                        # Update existing payment transaction record
                         transaction.status = 'COMPLETED'
                         transaction.receipt_number = result.get('receipt_number')
                         transaction.mpesa_response = {
                             'receipt_number': result.get('receipt_number'),
                             'checkout_request_id': transaction.checkout_request_id,
+                            'ledger_tx_id': getattr(ledger_tx, 'id', None),
                         }
                         transaction.description = f"Deposit successful: KES {transaction.amount}"
                         transaction.save()
-                        
-                        logger.info(f"✅ Payment successful for user {user.phone_number}, amount: {transaction.amount}, new balance: {user.balance}")
-                    
+
+                        logger.info(f"✅ Payment successful for user {user.phone_number}, amount: {transaction.amount}, new balance: {updated_balance}")
+
                     # Verify balance consistency
                     balance_check = verify_user_balance_consistency(user.id)
                     if not balance_check['is_consistent']:
                         logger.warning(f"⚠️ Balance inconsistency detected after deposit: {balance_check}")
-                    
+
                     # Create notification
                     create_notification(
                         user=user,
@@ -635,7 +679,7 @@ def mpesa_callback(request):
                         color_class='green',
                         related_transaction_id=transaction.id
                     )
-                    
+
                 except TransactionError as e:
                     logger.error(f"❌ Transaction processing failed for deposit {transaction.id}: {str(e)}")
                     transaction.status = 'FAILED'

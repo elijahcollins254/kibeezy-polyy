@@ -11,6 +11,7 @@ from .models import CustomUser
 from api.validators import validate_phone_number, validate_password, validate_full_name, normalize_phone_number, ValidationError
 from notifications.views import create_notification
 from markets.utils.price_calculations import PAYOUT_PER_SHARE
+from .jwt_auth import generate_jwt_token
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,25 @@ def logout_view(request):
     logout(request)
     logger.info(f"User logged out")
     return JsonResponse({'message': 'Logged out successfully'})
+
+
+@require_http_methods(["POST"])
+def token_view(request):
+    """Issue a JWT token for the currently authenticated session user.
+
+    This endpoint requires an active session (user logged in via `login_view`).
+    Returns: {"token": "<jwt>"}
+    """
+    user = request.user if request.user and request.user.is_authenticated else None
+    if not user:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    try:
+        token = generate_jwt_token(user)
+        return JsonResponse({'token': token})
+    except Exception as e:
+        logger.error(f"Token issuance failed: {e}")
+        return JsonResponse({'error': 'Token issuance failed'}, status=500)
 
 
 @csrf_exempt

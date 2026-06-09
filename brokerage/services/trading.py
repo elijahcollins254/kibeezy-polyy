@@ -1,0 +1,187 @@
+from decimal import Decimal
+from typing import Optional, Dict, Any
+from django.conf import settings
+from django.db import transaction as db_transaction
+from django.utils import timezone
+
+from brokerage.services.ledger import reserve_user_funds, release_user_funds, create_transaction_with_entries, LedgerError
+from brokerage.publish import publish_market_event
+from brokerage.services.polymarket.adapter import PolymarketAdapter
+from brokerage.models import Order, Market, Fill, Position
+from markets.models import Market as MarketsMarket, Bet
+
+
+class TradingService:
+    def __init__(self, adapter: Optional[PolymarketAdapter] = None):
+        self.adapter = adapter or PolymarketAdapter()
+
+    def validate_balance(self, user, required_amount: Decimal) -> bool:
+        # Uses Account-based balances via user's wallet liability account
+        wallet = getattr(user, 'wallet', None)
+        if wallet is None:
+            return False
+        available = Decimal(wallet.available_balance() or 0)
+        return available >= required_amount
+
+    def create_bet_from_fill(self, user, market_external_id: str, side: str, fill_data: Dict[str, Any]) -> Bet:
+        """Create a markets.Bet record from a Polymarket fill.
+        
+        This represents the user's position in the market after a fill is executed.
+        """
+        f_size = Decimal(str(fill_data.get('size')))
+        f_price = Decimal(str(fill_data.get('price')))
+        outcome = 'Yes' if side.upper() == 'BUY' else 'No'
+        amount = f_size * f_price
+        
+        # Get or create markets.Market record (synchronized with Polymarket)
+        markets_market, _ = MarketsMarket.objects.get_or_create(
+            question=market_external_id,
+            defaults={
+                'category': 'Crypto',  # default category, can be updated later
+                'description': f'Polymarket {market_external_id}',
+                'market_type': 'BINARY',
+                'status': 'OPEN',
+                'end_date': '',
+            }
+        )
+        
+        # Create Bet record
+        bet = Bet.objects.create(
+            user=user,
+            market=markets_market,
+            outcome=outcome,
+            amount=amount,
+            quantity=f_size,
+            action=side.upper(),
+            order_type='MARKET',
+            order_status='FILLED',
+            filled_at=timezone.now(),
+            entry_probability=50,  # Can be updated with actual market probability
+        )
+        
+        return bet
+
+    def place_user_order(self, user, market_external_id: str, side: str, size: Decimal, price: Decimal) -> Order:
+        # Calculate cost (simple cost = size * price) — adapt for market conventions
+        cost = (size * price).quantize(Decimal('0.00000001'))
+
+        if not self.validate_balance(user, cost):
+            raise LedgerError('Insufficient funds')
+
+        # Reserve funds
+        reserve_tx = reserve_user_funds(user, cost)
+
+        # Create local order record
+        market, _ = Market.objects.get_or_create(external_id=market_external_id, defaults={'title': market_external_id})
+        order = Order.objects.create(
+            user=user,
+            market=market,
+            side=side,
+            size=size,
+            price=price,
+            status='PENDING'
+        )
+
+        # Enqueue/perform the external order placement synchronously here for simplicity — prefer Celery task in production
+        try:
+            external = self.adapter.place_order(market_id=market_external_id, side=side, size=float(size), price=float(price), metadata={'internal_order_id': order.id})
+        except Exception as e:
+            # Release reserved funds on failure
+            release_user_funds(user, cost)
+            order.status = 'REJECTED'
+            order.save()
+            raise
+
+        # Update order with external id and status
+        order.external_order_id = external.get('id') or external.get('order_id') or None
+        # Polymarket may return immediate fill info; interpret conservatively
+        order.status = 'OPEN'
+        order.save()
+
+        # If external response contains fills, create Fill records and ledger settlement
+        fills = external.get('fills') or []
+        total_filled = Decimal('0')
+        for f in fills:
+            f_size = Decimal(str(f.get('size')))
+            f_price = Decimal(str(f.get('price')))
+            fill_amount = (f_size * f_price).quantize(Decimal('0.00000001'))
+            
+            # Create brokerage.Fill record (order execution record)
+            Fill.objects.create(order=order, external_fill_id=f.get('id'), size=f_size, price=f_price)
+            
+            # Create markets.Bet record (user position record)
+            try:
+                bet = self.create_bet_from_fill(user, market_external_id, side, f)
+                # Store bet ID in metadata for traceability
+                fill_metadata = {
+                    'external_fill_id': f.get('id'),
+                    'bet_id': bet.id,
+                    'fill_amount': str(fill_amount),
+                }
+            except Exception as e:
+                # Log Bet creation failure but continue with ledger
+                fill_metadata = {
+                    'external_fill_id': f.get('id'),
+                    'bet_creation_error': str(e),
+                    'fill_amount': str(fill_amount),
+                }
+                raise
+            
+            total_filled += f_size
+            
+            # Create ledger entries for each fill: move reserved -> market escrow
+            # Debit: LIABILITY_RESERVED_{user.id}
+            # Credit: MARKET_ESCROW_{market.external_id}
+            entries = [
+                {
+                    'debit': f'LIABILITY_RESERVED_{user.id}',
+                    'credit': f'MARKET_ESCROW_{market_external_id}',
+                    'amount': str(fill_amount),
+                    'description': f'Fill of {side} {f_size} @ {f_price} for market {market_external_id}'
+                },
+            ]
+            create_transaction_with_entries(
+                user,
+                'TRADE',
+                entries,
+                reference=f'fill:{order.id}:{f.get("id")}',
+                metadata=fill_metadata
+            )
+
+            # publish fill to WebSocket subscribers
+            try:
+                publish_market_event(market_external_id, {
+                    'type': 'fill',
+                    'order_id': order.id,
+                    'external_fill_id': f.get('id'),
+                    'size': str(f_size),
+                    'price': str(f_price),
+                    'bet_id': fill_metadata.get('bet_id'),
+                })
+            except Exception:
+                # best-effort, don't fail the flow on publish errors
+                pass
+
+        # If fully filled, mark FILLED and update position
+        # Note: We maintain dual position records:
+        # - brokerage.Position: Tracks reserved funds and balance impact (internal ledger)
+        # - markets.Bet: Tracks user's market positions and outcomes (trading app)
+        if total_filled >= order.size:
+            order.status = 'FILLED'
+            order.save()
+            # Update or create brokerage position (for balance management)
+            pos, _ = Position.objects.get_or_create(user=user, market=market, defaults={'quantity': total_filled, 'average_price': price})
+            if pos.quantity and pos.average_price:
+                # Weighted average update
+                prev_qty = pos.quantity
+                prev_avg = pos.average_price
+                new_qty = prev_qty + total_filled
+                new_avg = ((prev_qty * prev_avg) + (total_filled * price)) / new_qty
+                pos.quantity = new_qty
+                pos.average_price = new_avg
+            else:
+                pos.quantity = total_filled
+                pos.average_price = price
+            pos.save()
+
+        return order

@@ -8,6 +8,7 @@ from .migration_views import migrate_phone_numbers
 urlpatterns = [
     path('signup/', signup_view, name='signup'),
     path('login/', login_view, name='login'),
+    path('token/', token_view, name='token'),
     path('logout/', logout_view, name='logout'),
     path('check/', check_auth, name='check_auth'),
     path('google/', google_auth_view, name='google_auth'),

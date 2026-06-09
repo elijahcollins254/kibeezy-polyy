@@ -80,24 +80,33 @@ class Command(BaseCommand):
                 # Offer to fix if flag is set
                 if fix and not alert_only:
                     try:
-                        user.balance = Decimal(str(result['expected_balance']))
-                        user.save(update_fields=['balance'])
-                        
-                        # Log correction
-                        Transaction.objects.create(
-                            user=user,
-                            type='PAYOUT',
-                            amount=abs(Decimal(str(result['difference']))),
-                            phone_number=user.phone_number,
-                            status='COMPLETED',
-                            description=f"Reconciliation correction: balance adjusted by {result['difference']}",
-                            external_ref=f"RECONCILE-{user.id}"
+                        # Adjust ledger to match expected balance by creating deposit/withdrawal reversal
+                        from brokerage.services.ledger import (
+                            get_computed_balance,
+                            record_deposit_and_update_balance,
+                            record_withdrawal_reversal_and_update_balance
                         )
-                        
+
+                        expected = Decimal(str(result['expected_balance']))
+                        current_ledger = get_computed_balance(user)
+                        diff = expected - current_ledger
+
+                        if diff == 0:
+                            self.stdout.write(self.style.SUCCESS("  ✓ Ledger already matches expected balance"))
+                        elif diff > 0:
+                            # Create deposit for the difference
+                            ledger_tx, new_bal = record_deposit_and_update_balance(user, diff, reference=f'RECONCILE-{user.id}')
+                            self.stdout.write(self.style.SUCCESS(f"  ✓ Created deposit tx {ledger_tx.id} for KES {diff}. New balance: {new_bal}"))
+                            fixed_count += 1
+                        else:
+                            # Create withdrawal reversal (refund) to reduce ledger balance
+                            amt = abs(diff)
+                            ledger_tx, new_bal = record_withdrawal_reversal_and_update_balance(user, amt, reference=f'RECONCILE-{user.id}')
+                            self.stdout.write(self.style.SUCCESS(f"  ✓ Created reversal tx {ledger_tx.id} for KES {amt}. New balance: {new_bal}"))
+                            fixed_count += 1
+
                         logger.info(f"✓ Fixed balance for user {user.id}: {result['difference']}")
-                        self.stdout.write(self.style.SUCCESS("  ✓ Balance corrected"))
-                        fixed_count += 1
-                        
+
                     except Exception as e:
                         self.stdout.write(self.style.ERROR(f"  ✗ Failed to fix: {str(e)}"))
             else:

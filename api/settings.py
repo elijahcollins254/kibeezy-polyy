@@ -53,6 +53,8 @@ INSTALLED_APPS = [
     'notifications',
     'support',
     'audit',  # Audit trail & immutability
+    'brokerage',  # Prediction market brokerage app (ledger, positions, adapters)
+    'channels',
 ]
 
 
@@ -92,6 +94,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'api.wsgi.app'
+ASGI_APPLICATION = 'api.asgi.application'
 
 AUTHENTICATION_BACKENDS = [
     'users.backends.AdminPhoneBackend',  # For Django admin (allows superusers without is_staff)
@@ -396,6 +399,36 @@ CELERY_RESULT_EXPIRES = config('CELERY_RESULT_EXPIRES', default=3600, cast=int) 
 # Retry configuration
 CELERY_TASK_MAX_RETRIES = 5
 CELERY_TASK_DEFAULT_RETRY_DELAY = 60  # seconds
+
+
+# Channels (ASGI) configuration - use Redis as channel layer
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [config('CHANNEL_LAYERS_URL', default='redis://127.0.0.1:6379/2')],
+        },
+    },
+}
+
+
+# Celery Beat schedule: periodic tasks
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    # Poll orderbooks frequently (every 5 seconds may be aggressive; set to 15s in prod)
+    'poll-and-publish-orderbooks': {
+        'task': 'brokerage.tasks.poll_and_publish_orderbooks',
+        'schedule': 15.0,  # seconds
+        'args': (),
+    },
+    # Sync markets daily
+    'sync-polymarket-markets-daily': {
+        'task': 'brokerage.tasks.sync_polymarket_markets_task',
+        'schedule': crontab(hour=2, minute=0),  # 02:00 UTC daily
+        'args': (),
+    },
+}
 
 
 # ============================================================================
