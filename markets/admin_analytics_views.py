@@ -1,5 +1,5 @@
 """
-Analytics and Financial Metrics Views for Admin Dashboard
+Analytics and Financial Metrics Views for Admin Dashboard.
 
 Provides aggregated data for analytics and financial dashboards.
 """
