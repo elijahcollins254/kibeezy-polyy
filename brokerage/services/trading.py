@@ -185,3 +185,70 @@ class TradingService:
             pos.save()
 
         return order
+
+    def place_polymarket_order(
+        self,
+        user,
+        token_id: str,
+        side: str,
+        size: float,
+        price: float,
+        order_type: str = 'market',
+    ) -> Dict[str, Any]:
+        """
+        Place an order on Polymarket using py-clob-client-v2.
+        
+        Args:
+            user: Django user object
+            token_id: Polymarket token ID (from market.clobTokenIds)
+            side: 'BUY' or 'SELL'
+            size: Number of shares (or USD for market orders)
+            price: Price (0-1 for probability, ignored for market orders)
+            order_type: 'market' or 'limit'
+        
+        Returns:
+            Dict with order result
+        """
+        try:
+            if order_type == 'market':
+                # Market order: amount is in USD
+                response = self.adapter.place_market_order(
+                    token_id=token_id,
+                    amount=size,
+                    side=side,
+                )
+            else:
+                # Limit order: size is shares, price is 0-1
+                response = self.adapter.place_limit_order(
+                    token_id=token_id,
+                    price=price,
+                    size=size,
+                    side=side,
+                )
+            
+            # Extract order ID and status from response
+            order_id = response.get('id') or response.get('order_id')
+            
+            # Log the order
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Polymarket {order_type} order placed: {side} {size} token={token_id} order_id={order_id}")
+            
+            # Return success response
+            return {
+                'success': True,
+                'order_id': order_id,
+                'type': order_type,
+                'side': side,
+                'size': size,
+                'price': price,
+                'token_id': token_id,
+                'response': response,  # Include full response for debugging
+            }
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to place Polymarket order: {e}", exc_info=True)
+            raise
+

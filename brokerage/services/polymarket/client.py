@@ -1,21 +1,35 @@
 """Polymarket client split by API role.
 
-This module provides two lightweight clients:
+This module provides:
 - `PolymarketDataClient` for Data/Gamma endpoints (read-only market data and metadata)
-- `PolymarketClobClient` for CLOB trading endpoints (orderbook, orders, positions)
+- `PolymarketClobClient` for CLOB trading endpoints using py-clob-client-v2
+- `PolymarketClient` composing both clients
 
-`PolymarketClient` composes the two and routes calls appropriately.
+Uses py-clob-client-v2 for proper L1 signing and authentication.
 """
 import requests
 from typing import Any, Dict, List, Optional
 from django.conf import settings
 import json
-from urllib.parse import urlparse
 import logging
-
-from brokerage.services.polymarket.auth import build_l2_headers
+import os
 
 logger = logging.getLogger(__name__)
+
+try:
+    from py_clob_client_v2 import (
+        ClobClient,
+        OrderArgs,
+        MarketOrderArgs,
+        OrderType,
+        Side,
+        BalanceAllowanceParams,
+        AssetType,
+    )
+    HAS_SDK = True
+except ImportError:
+    HAS_SDK = False
+    logger.error("py-clob-client-v2 not installed. Install it for order placement.")
 
 
 class PolymarketDataClient:
@@ -54,100 +68,231 @@ class PolymarketDataClient:
     def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
         """Query positions from the Data API (user-level positions/holdings)."""
         url = f"{self.base_url}/positions"
-        resp = self.session.get(url, params={'account_id': account_id}, timeout=10)
+        resp = self.session.get(url, params={'user': account_id}, timeout=10)
         resp.raise_for_status()
         return resp.json()
 
 
 class PolymarketClobClient:
-    """Client for CLOB trading endpoints.
+    """Client for CLOB trading endpoints using py-clob-client-v2 SDK.
 
-    Defaults to `POLY_CLOB_BASE_URL` or `POLYMARKET_BASE_URL` or `https://clob.polymarket.com`.
-    Attaches L2 headers per-request when credentials are configured.
+    Uses L1 authentication (private key) to derive API credentials and place orders.
+    Configured via environment variables or Django settings.
     """
-    def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, base_url: Optional[str] = None):
+        if not HAS_SDK:
+            raise RuntimeError("py-clob-client-v2 is required. Install it to use PolymarketClobClient.")
+
         self.base_url = (
             base_url
             or getattr(settings, 'POLY_CLOB_BASE_URL', None)
             or getattr(settings, 'POLYMARKET_BASE_URL', None)
             or 'https://clob.polymarket.com'
         )
-        self.api_key = api_key or getattr(settings, 'POLYMARKET_API_KEY', None)
-        self.api_secret = getattr(settings, 'POLY_API_SECRET', None) or getattr(settings, 'POLYMARKET_API_SECRET', None)
-        self.api_passphrase = getattr(settings, 'POLY_API_PASSPHRASE', None) or getattr(settings, 'POLYMARKET_API_PASSPHRASE', None)
-        self.poly_address = getattr(settings, 'POLY_ADDRESS', None) or getattr(settings, 'POLYMARKET_ADDRESS', None)
-        self.session = requests.Session()
 
-    def _maybe_build_l2_headers(self, method: str, full_url: str, body: Optional[str]) -> Dict[str, str]:
-        if not all([self.api_key, self.api_secret, self.api_passphrase, self.poly_address]):
-            return {}
+        # Get credentials from settings or environment
+        self.private_key = (
+            getattr(settings, 'POLY_PRIVATE_KEY', None)
+            or os.getenv('POLY_PRIVATE_KEY')
+        )
+        self.funder_address = (
+            getattr(settings, 'POLY_ADDRESS', None)
+            or getattr(settings, 'POLYMARKET_ADDRESS', None)
+            or os.getenv('POLY_ADDRESS')
+        )
+        self.signature_type = getattr(settings, 'POLY_SIGNATURE_TYPE', 0)  # 0=EOA, 1=Email, 2=Proxy
 
-        parsed = urlparse(full_url)
-        path = parsed.path or '/'
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
+        self._client = None
+        self._init_client()
+
+    def _init_client(self):
+        """Initialize the ClobClient with authentication."""
+        if not self.private_key:
+            logger.warning("POLY_PRIVATE_KEY not set. Order placement will fail.")
+            return
 
         try:
-            return build_l2_headers(
-                api_key=self.api_key,
-                secret_b64=self.api_secret,
-                passphrase=self.api_passphrase,
-                address=self.poly_address,
-                method=method,
-                path=path,
-                body=body,
+            self._client = ClobClient(
+                host=self.base_url,
+                key=self.private_key,
+                chain_id=137,  # Polygon mainnet
+                signature_type=self.signature_type,
+                funder=self.funder_address,
             )
+            # Derive and set API credentials for L2 requests
+            creds = self._client.derive_api_key()
+            self._client.set_api_creds(creds)
+            logger.info("Polymarket CLOB client initialized successfully")
         except Exception as e:
-            logger.warning(f"Failed to build L2 headers: {e}")
-            return {}
+            logger.error(f"Failed to initialize Polymarket CLOB client: {e}")
+            self._client = None
 
     def get_orderbook(self, token_id: str) -> Dict[str, Any]:
-        url = f"{self.base_url}/orderbook/{token_id}"
-        headers = self._maybe_build_l2_headers('GET', url, None)
-        resp = self.session.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        """Fetch order book for a token."""
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+        
+        book = self._client.get_order_book(token_id)
+        return book
 
-    def place_order(self, market_id: str, side: str, size: float, price: float, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
-        url = f"{self.base_url}/orders"
-        payload = {
-            'market_id': market_id,
-            'side': side,
-            'size': size,
-            'price': price,
-        }
-        if metadata:
-            payload['metadata'] = metadata
-        body = json.dumps(payload, separators=(',', ':'))
-        headers = self._maybe_build_l2_headers('POST', url, body)
-        resp = self.session.post(url, data=body, headers=headers, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+    def get_midpoint(self, token_id: str) -> float:
+        """Get midpoint price for a token."""
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+        
+        mid = self._client.get_midpoint(token_id)
+        return float(mid.get('mid', 0))
+
+    def place_market_order(self, token_id: str, amount: float, side: str) -> Dict[str, Any]:
+        """
+        Place a market order using py-clob-client-v2.
+        
+        Args:
+            token_id: Token ID to trade
+            amount: Amount in USD to spend (for BUY) or shares to sell (for SELL)
+            side: 'BUY' or 'SELL'
+        
+        Returns:
+            Order response dict
+        """
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+
+        try:
+            side_enum = Side.BUY if side.upper() == 'BUY' else Side.SELL
+            
+            # Create market order
+            market_order = MarketOrderArgs(
+                token_id=token_id,
+                amount=amount,
+                side=side_enum,
+                order_type=OrderType.FOK,  # Fill-or-Kill
+            )
+            
+            # Sign the order
+            signed_order = self._client.create_market_order(market_order)
+            
+            # Post the order
+            response = self._client.post_order(signed_order, OrderType.FOK)
+            
+            logger.info(f"Market order placed: {side} {amount} {token_id}")
+            return response
+        except Exception as e:
+            logger.error(f"Failed to place market order: {e}")
+            raise
+
+    def place_limit_order(self, token_id: str, price: float, size: float, side: str) -> Dict[str, Any]:
+        """
+        Place a limit order using py-clob-client-v2.
+        
+        Args:
+            token_id: Token ID to trade
+            price: Limit price (0.0-1.0)
+            size: Number of shares
+            side: 'BUY' or 'SELL'
+        
+        Returns:
+            Order response dict
+        """
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+
+        try:
+            side_enum = Side.BUY if side.upper() == 'BUY' else Side.SELL
+            
+            # Create limit order
+            limit_order = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=size,
+                side=side_enum,
+            )
+            
+            # Sign the order
+            signed_order = self._client.create_order(limit_order)
+            
+            # Post the order (GTC = Good Till Cancelled)
+            response = self._client.post_order(signed_order, OrderType.GTC)
+            
+            logger.info(f"Limit order placed: {side} {size}@{price} {token_id}")
+            return response
+        except Exception as e:
+            logger.error(f"Failed to place limit order: {e}")
+            raise
 
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
-        url = f"{self.base_url}/orders/{order_id}"
-        headers = self._maybe_build_l2_headers('DELETE', url, None)
-        resp = self.session.delete(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        """Cancel an order."""
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+        
+        return self._client.cancel_orders([order_id])
+
+    def get_balance(self) -> float:
+        """Get account balance in USD."""
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+        
+        try:
+            balance_data = self._client.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+            balance_wei = int(balance_data.get('balance', 0))
+            balance_usd = balance_wei / 1e6  # Convert from wei to USD
+            return balance_usd
+        except Exception as e:
+            logger.error(f"Failed to fetch balance: {e}")
+            return 0.0
 
     def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
-        url = f"{self.base_url}/positions"
-        headers = self._maybe_build_l2_headers('GET', url, None)
-        resp = self.session.get(url, params={'account_id': account_id}, headers=headers, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        """Get user positions."""
+        if not self._client:
+            raise RuntimeError("CLOB client not initialized")
+        
+        # This would need to be implemented based on py-clob-client-v2 API
+        # For now, return empty list
+        return []
 
 
 class PolymarketClient:
     """High-level client that routes Data vs CLOB calls to the right client."""
-    def __init__(self, data_base_url: Optional[str] = None, clob_base_url: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, data_base_url: Optional[str] = None, clob_base_url: Optional[str] = None):
         self.data = PolymarketDataClient(base_url=data_base_url)
-        self.clob = PolymarketClobClient(base_url=clob_base_url, api_key=api_key)
+        try:
+            self.clob = PolymarketClobClient(base_url=clob_base_url)
+        except RuntimeError as e:
+            logger.warning(f"CLOB client unavailable: {e}")
+            self.clob = None
 
     # Data endpoints
     def get_markets(self, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         return self.data.get_markets(params=params)
+
+    def get_market(self, market_id: str) -> Dict[str, Any]:
+        return self.data.get_market(market_id)
+
+    def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        return self.data.get_trade_history(market_id, limit=limit)
+
+    # CLOB endpoints
+    def get_orderbook(self, token_id: str) -> Dict[str, Any]:
+        if not self.clob:
+            raise RuntimeError("CLOB client not available")
+        return self.clob.get_orderbook(token_id)
+
+    def place_order(self, market_id: str, side: str, size: float, price: float, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+        if not self.clob:
+            raise RuntimeError("CLOB client not available")
+        return self.clob.place_market_order(market_id, size, side)
+
+    def cancel_order(self, order_id: str) -> Dict[str, Any]:
+        if not self.clob:
+            raise RuntimeError("CLOB client not available")
+        return self.clob.cancel_order(order_id)
+
+    def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
+        # Positions are served by the Data API (user-level holdings/positions)
+        return self.data.get_positions(account_id)
+
 
     def get_market(self, market_id: str) -> Dict[str, Any]:
         return self.data.get_market(market_id)
