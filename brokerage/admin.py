@@ -29,13 +29,13 @@ class WalletAdmin(admin.ModelAdmin):
 
 @admin.register(models.Market)
 class MarketAdmin(admin.ModelAdmin):
-    list_display = ('get_status', 'source', 'title', 'external_id', 'created_at', 'is_approved')
+    list_display = ('get_status', 'source', 'get_question', 'external_id', 'created_at', 'is_approved')
     list_filter = ('is_approved', 'source', 'created_at')
-    search_fields = ('title', 'external_id', 'description')
+    search_fields = ('question', 'title', 'external_id', 'description')
     readonly_fields = ('external_id', 'created_at', 'approved_at')
     fieldsets = (
         ('Market Info', {
-            'fields': ('external_id', 'title', 'description', 'source')
+            'fields': ('external_id', 'title', 'question', 'description', 'source')
         }),
         ('Approval', {
             'fields': ('is_approved', 'approved_at'),
@@ -52,6 +52,12 @@ class MarketAdmin(admin.ModelAdmin):
             return '✓ Approved'
         return '⊘ Pending'
     get_status.short_description = 'Status'
+    
+    def get_question(self, obj):
+        if obj.question:
+            return obj.question[:80] + '...' if len(obj.question) > 80 else obj.question
+        return obj.title
+    get_question.short_description = 'Question'
     
     def save_model(self, request, obj, form, change):
         # Set approved_at timestamp when approving

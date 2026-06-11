@@ -78,6 +78,7 @@ class Market(models.Model):
     
     external_id = models.CharField(max_length=128, unique=True)
     title = models.CharField(max_length=255)
+    question = models.TextField(blank=True, null=True, help_text="The actual market question")
     description = models.TextField(blank=True, null=True)
     resolution = models.CharField(max_length=32, null=True, blank=True)
     source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default='local')
@@ -91,7 +92,8 @@ class Market(models.Model):
 
     def __str__(self):
         status = "✓ Approved" if self.is_approved else "⊘ Pending"
-        return f"{status} | {self.source.upper()} | {self.external_id} - {self.title}"
+        market_label = self.question or self.title
+        return f"{status} | {self.source.upper()} | {market_label}"
 
 
 class Position(models.Model):

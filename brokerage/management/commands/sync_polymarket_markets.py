@@ -23,6 +23,7 @@ class Command(BaseCommand):
                 external_id=str(external_id),
                 defaults={
                     'title': m.get('title') or m.get('name') or external_id,
+                    'question': m.get('question') or m.get('title') or m.get('name') or '',
                     'description': m.get('description') or '',
                     'metadata': m,
                 }
