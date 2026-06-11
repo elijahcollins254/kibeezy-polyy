@@ -71,15 +71,27 @@ class Wallet(models.Model):
 
 
 class Market(models.Model):
+    SOURCE_CHOICES = [
+        ('polymarket', 'Polymarket'),
+        ('local', 'Local'),
+    ]
+    
     external_id = models.CharField(max_length=128, unique=True)
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     resolution = models.CharField(max_length=32, null=True, blank=True)
+    source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default='local')
+    is_approved = models.BooleanField(default=False, help_text="Check to show this market on your frontend")
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.external_id} - {self.title}"
+        status = "✓ Approved" if self.is_approved else "⊘ Pending"
+        return f"{status} | {self.source.upper()} | {self.external_id} - {self.title}"
 
 
 class Position(models.Model):

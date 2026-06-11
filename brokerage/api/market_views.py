@@ -25,8 +25,8 @@ class MarketListView(APIView):
             except Exception:
                 pass
 
-        # Fallback: Return local markets list
-        qs = Market.objects.all().order_by('-created_at')[:200]
+        # Return only approved local markets
+        qs = Market.objects.filter(is_approved=True).order_by('-created_at')[:200]
         out = MarketSerializer(qs, many=True)
         return Response(out.data)
 
