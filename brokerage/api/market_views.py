@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
+from django.db import models
 import logging
 
 from brokerage.models import Market
@@ -21,27 +22,49 @@ class MarketListView(APIView):
         q = request.query_params.get('q')
         adapter = PolymarketAdapter()
         
-        # If search query provided, proxy to Polymarket
+        # If search query provided, fetch from our database first, then fallback to Polymarket API
         if q:
             try:
-                params = {'q': q, 'limit': 100}
-                markets = adapter.get_markets(params=params)
-                response = Response(markets)
+                # First try searching in our database for approved markets
+                qs = Market.objects.filter(
+                    is_approved=True,
+                    source='polymarket'
+                ).filter(
+                    models.Q(title__icontains=q) | 
+                    models.Q(question__icontains=q) | 
+                    models.Q(category__icontains=q)
+                ).order_by('-created_at')[:100]
+                
+                if qs.exists():
+                    out = MarketSerializer(qs, many=True)
+                    response = Response(out.data)
+                else:
+                    # Fallback to Polymarket API if not in database
+                    params = {'q': q, 'limit': 100}
+                    markets = adapter.get_markets(params=params)
+                    response = Response(markets)
             except Exception as e:
-                logger.warning(f"Failed to search Polymarket markets: {str(e)}")
+                logger.warning(f"Failed to search markets: {str(e)}")
                 response = Response([], status=status.HTTP_200_OK)
         else:
-            # By default, fetch Polymarket markets
+            # By default, fetch approved Polymarket markets from our database (which have categories)
             try:
-                polymarkets = adapter.get_markets(params={'limit': 100})
-                logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets")
-                response = Response(polymarkets)
+                qs = Market.objects.filter(
+                    is_approved=True,
+                    source='polymarket'
+                ).order_by('-created_at')[:500]
+                
+                if qs.exists():
+                    out = MarketSerializer(qs, many=True)
+                    response = Response(out.data)
+                else:
+                    # Fallback to Polymarket API if no approved markets in database
+                    polymarkets = adapter.get_markets(params={'limit': 100})
+                    logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets from API")
+                    response = Response(polymarkets)
             except Exception as e:
                 logger.error(f"Failed to fetch Polymarket markets: {str(e)}", exc_info=True)
-                # Fallback to local markets only if Polymarket fetch fails
-                qs = Market.objects.filter(is_approved=True).order_by('-created_at')[:200]
-                out = MarketSerializer(qs, many=True)
-                response = Response(out.data)
+                response = Response([], status=status.HTTP_200_OK)
         
         # Disable caching for live market data
         response['Cache-Control'] = 'no-cache, no-store, must-revalidate'

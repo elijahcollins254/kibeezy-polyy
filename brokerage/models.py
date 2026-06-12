@@ -76,10 +76,22 @@ class Market(models.Model):
         ('local', 'Local'),
     ]
     
+    CATEGORY_CHOICES = [
+        ('Sports', 'Sports'),
+        ('Politics', 'Politics'),
+        ('Economy', 'Economy'),
+        ('Crypto', 'Crypto'),
+        ('Technology', 'Technology'),
+        ('Environment', 'Environment'),
+        ('Geopolitics', 'Geopolitics'),
+        ('Other', 'Other'),
+    ]
+    
     external_id = models.CharField(max_length=128, unique=True)
     title = models.CharField(max_length=255)
     question = models.TextField(blank=True, null=True, help_text="The actual market question")
     description = models.TextField(blank=True, null=True)
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='Other', db_index=True)
     resolution = models.CharField(max_length=32, null=True, blank=True)
     source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default='local')
     is_approved = models.BooleanField(default=False, help_text="Check to show this market on your frontend")

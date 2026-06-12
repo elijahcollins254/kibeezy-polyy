@@ -43,15 +43,24 @@ class PolymarketDataClient:
             base_url
             or getattr(settings, 'POLY_DATA_BASE_URL', None)
             or getattr(settings, 'POLY_GAMMA_BASE_URL', None)
-            or 'https://data-api.polymarket.com'
+            or 'https://gamma-api.polymarket.com'
         )
         self.session = requests.Session()
 
     def get_markets(self, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/markets"
-        resp = self.session.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.HTTPError as e:
+            # Fallback to Gamma API if data-api fails
+            if 'data-api' in url:
+                url = url.replace('data-api.polymarket.com', 'gamma-api.polymarket.com')
+                resp = self.session.get(url, params=params, timeout=10)
+                resp.raise_for_status()
+                return resp.json()
+            raise
 
     def get_market(self, market_id: str) -> Dict[str, Any]:
         url = f"{self.base_url}/markets/{market_id}"

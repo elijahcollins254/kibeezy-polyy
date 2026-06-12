@@ -29,8 +29,8 @@ class WalletAdmin(admin.ModelAdmin):
 
 @admin.register(models.Market)
 class MarketAdmin(admin.ModelAdmin):
-    list_display = ('get_status', 'source', 'get_question', 'external_id', 'created_at', 'is_approved')
-    list_filter = ('is_approved', 'source', 'created_at')
+    list_display = ('get_status', 'source', 'category', 'get_question', 'external_id', 'created_at', 'is_approved')
+    list_filter = ('is_approved', 'source', 'category', 'created_at')
     search_fields = ('question', 'title', 'external_id', 'description')
     readonly_fields = ('external_id', 'created_at', 'approved_at')
     fieldsets = (

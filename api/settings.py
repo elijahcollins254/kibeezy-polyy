@@ -424,11 +424,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 15.0,  # seconds
         'args': (),
     },
-    # Sync markets daily
-    'sync-polymarket-markets-daily': {
+    # Sync markets every hour (fetches up to 500 markets)
+    'sync-polymarket-markets-hourly': {
         'task': 'brokerage.tasks.sync_polymarket_markets_task',
-        'schedule': crontab(hour=2, minute=0),  # 02:00 UTC daily
-        'args': (),
+        'schedule': crontab(minute=0),  # Every hour at minute 0
+        'args': (500,),  # Fetch 500 markets per sync
     },
 }
 
