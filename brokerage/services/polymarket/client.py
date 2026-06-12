@@ -83,11 +83,15 @@ class PolymarketClobClient:
         if not HAS_SDK:
             raise RuntimeError("py-clob-client-v2 is required. Install it to use PolymarketClobClient.")
 
+        # Use Cloudflare Worker proxy to bypass geoblocking (if configured)
+        # This allows requests from non-US regions to work
         self.base_url = (
             base_url
             or getattr(settings, 'POLY_CLOB_BASE_URL', None)
             or getattr(settings, 'POLYMARKET_BASE_URL', None)
-            or 'https://clob.polymarket.com'
+            or os.getenv('POLY_CLOB_BASE_URL')  # Check environment for proxy URL
+            or os.getenv('POLYMARKET_CLOB_PROXY_URL')  # Alternative: dedicated proxy env var
+            or 'https://clob.polymarket.com'  # Fallback: direct (may fail if geoblocked)
         )
 
         # Get credentials from settings or environment
