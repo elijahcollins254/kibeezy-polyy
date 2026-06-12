@@ -2,12 +2,15 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
+import logging
 
 from brokerage.models import Market
 from brokerage.api.market_serializers import MarketSerializer
 from brokerage.services.polymarket.adapter import PolymarketAdapter
 from django.core.cache import cache
 from brokerage.publish import publish_market_event
+
+logger = logging.getLogger(__name__)
 
 
 class MarketListView(APIView):
@@ -17,18 +20,28 @@ class MarketListView(APIView):
         # Support search via query param `q` which will proxy to Polymarket Data/Gamma
         q = request.query_params.get('q')
         adapter = PolymarketAdapter()
+        
+        # If search query provided, proxy to Polymarket
         if q:
             try:
                 params = {'q': q, 'limit': 100}
                 markets = adapter.get_markets(params=params)
                 return Response(markets)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to search Polymarket markets: {str(e)}")
+                return Response([], status=status.HTTP_200_OK)
 
-        # Return only approved local markets
-        qs = Market.objects.filter(is_approved=True).order_by('-created_at')[:200]
-        out = MarketSerializer(qs, many=True)
-        return Response(out.data)
+        # By default, fetch Polymarket markets
+        try:
+            polymarkets = adapter.get_markets(params={'limit': 100})
+            logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets")
+            return Response(polymarkets)
+        except Exception as e:
+            logger.error(f"Failed to fetch Polymarket markets: {str(e)}", exc_info=True)
+            # Fallback to local markets only if Polymarket fetch fails
+            qs = Market.objects.filter(is_approved=True).order_by('-created_at')[:200]
+            out = MarketSerializer(qs, many=True)
+            return Response(out.data)
 
 
 class MarketDetailView(APIView):
@@ -55,8 +68,10 @@ class MarketDetailView(APIView):
             try:
                 trades = adapter.get_trade_history(external_id, limit=int(request.query_params.get('limit', 100)))
                 return Response(trades)
-            except Exception:
-                return Response({'error': 'failed_fetch_trades'}, status=status.HTTP_502_BAD_GATEWAY)
+            except Exception as e:
+                logger.error(f"Failed to fetch trade history for {external_id}: {str(e)}", exc_info=True)
+                # Return empty trades list as fallback instead of error
+                return Response([], status=status.HTTP_200_OK)
 
         # Positions endpoint (requires authentication)
         if request.path.endswith('/positions/'):
