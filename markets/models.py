@@ -90,6 +90,8 @@ class Bet(models.Model):
     action = models.CharField(max_length=10, choices=ACTION_CHOICES, default='BUY')
     timestamp = models.DateTimeField(auto_now_add=True)
     filled_at = models.DateTimeField(null=True, blank=True)  # When limit order was filled
+    trading_fee = models.DecimalField(max_digits=15, decimal_places=8, default=0)  # Trading fee charged
+    total_cost = models.DecimalField(max_digits=15, decimal_places=8, null=True, blank=True)  # Amount + fee
     
     def __str__(self):
         return f"{self.user.phone_number} - {self.market.question} - {self.outcome}"

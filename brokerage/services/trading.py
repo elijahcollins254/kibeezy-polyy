@@ -5,6 +5,7 @@ from django.db import transaction as db_transaction
 from django.utils import timezone
 
 from brokerage.services.ledger import reserve_user_funds, release_user_funds, create_transaction_with_entries, LedgerError
+from brokerage.services.fee_service import FeeService
 from brokerage.publish import publish_market_event
 from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.models import Order, Market, Fill, Position
@@ -210,6 +211,15 @@ class TradingService:
             Dict with order result
         """
         try:
+            # Calculate trading fee on the order size
+            size_decimal = Decimal(str(size))
+            fee, total_cost = FeeService.get_total_cost(size_decimal)
+            
+            # Check user balance includes fee
+            user_balance = Decimal(str(user.wallet.available_balance())) if hasattr(user, 'wallet') else Decimal(str(user.balance))
+            if total_cost > user_balance:
+                raise ValueError(f"Insufficient balance. Need {total_cost}, have {user_balance}")
+            
             if order_type == 'market':
                 # Market order: amount is in USD
                 response = self.adapter.place_market_order(
@@ -232,9 +242,9 @@ class TradingService:
             # Log the order
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"Polymarket {order_type} order placed: {side} {size} token={token_id} order_id={order_id}")
+            logger.info(f"Polymarket {order_type} order placed: {side} {size} token={token_id} order_id={order_id} (Fee: {fee})")
             
-            # Return success response
+            # Return success response with fee info
             return {
                 'success': True,
                 'order_id': order_id,
@@ -243,6 +253,8 @@ class TradingService:
                 'size': size,
                 'price': price,
                 'token_id': token_id,
+                'fee': float(fee),
+                'total_cost': float(total_cost),
                 'response': response,  # Include full response for debugging
             }
             

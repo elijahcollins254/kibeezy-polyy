@@ -454,6 +454,9 @@ MPESA_CALLBACK_URL = config('MPESA_CALLBACK_URL', default='https://cache.co.ke/a
 PAYOUT_PLATFORM_FEE_PCT = config('PAYOUT_PLATFORM_FEE_PCT', default='5.00')
 PAYOUT_MIN_AMOUNT = config('PAYOUT_MIN_AMOUNT', default='10')  # KES
 
+# Trading Fee Settings
+TRADING_FEE_PCT = config('TRADING_FEE_PCT', default='0.5')  # 0.5% trading fee on all orders
+
 
 # ============================================================================
 # CELERY BEAT SCHEDULE (Periodic Tasks)

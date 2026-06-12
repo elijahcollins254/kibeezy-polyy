@@ -5,6 +5,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.db import models
 from django.utils import timezone
+from django.conf import settings
 from decimal import Decimal
 from .models import Market, Bet, ChatMessage
 from .services import (
@@ -20,6 +21,7 @@ from payments.models import Transaction
 from api.validators import validate_amount, validate_bet_outcome, ValidationError
 from users.models import CustomUser
 from notifications.views import create_notification
+from brokerage.services.fee_service import FeeService
 
 
 def parse_volume_value(volume_str: str) -> int:
@@ -248,71 +250,66 @@ def place_bet(request):
         # Handle balance for MARKET orders only (LIMIT orders don't deduct balance immediately)
         lmsr_result = None  # Will store LMSR result for balance updates
         
+        # Calculate trading fee for all orders
+        fee, total_cost = FeeService.get_total_cost(amount)
+        
         if order_type == 'MARKET':
             if action == 'buy':
-                # Check if user has sufficient balance
-                if amount > user.balance:
-                    return JsonResponse({'error': f'Insufficient balance. Available: KES {user.balance}'}, status=400)
-                # Deduct from balance immediately for BUY orders
-                user.balance -= amount
+                # Check if user has sufficient balance for amount + fee
+                required_balance = total_cost
+                if required_balance > user.balance:
+                    return JsonResponse({
+                        'error': f'Insufficient balance. Need KES {total_cost} (KES {amount} + KES {fee} fee), but have KES {user.balance}'
+                    }, status=400)
+                # Deduct both amount and fee from balance
+                user.balance -= required_balance
                 user.save()
-            else:  # sell - must validate user owns these shares
-                # Calculate available shares to sell for this market/outcome
-                buy_quantity = Bet.objects.filter(
-                    user=user,
-                    market=market,
-                    outcome=outcome,
-                    action='BUY',
-                    option_id=option_id
-                ).aggregate(total=models.Sum('quantity'))['total'] or 0
-                
-                sell_quantity = Bet.objects.filter(
-                    user=user,
-                    market=market,
-                    outcome=outcome,
-                    action='SELL',
-                    option_id=option_id
-                ).aggregate(total=models.Sum('quantity'))['total'] or 0
-                
-                available_quantity = buy_quantity - sell_quantity
-                
-                # Check if user is trying to sell more than they own
-                if amount > Decimal(str(available_quantity)):
+            else:  # sell - only deduct fee
+                if fee > user.balance:
                     return JsonResponse({
-                        'error': f'Cannot sell {amount} shares. You only own {available_quantity} shares of {outcome} on this market.'
+                        'error': f'Insufficient balance for trading fee. Need KES {fee}, but have KES {user.balance}'
                     }, status=400)
-                
-                # Don't update balance here for SELL - wait for LMSR execution to get actual payout
-                # Balance will be updated after LMSR calculation
-        else:  # LIMIT order - only validate balance, don't deduct yet
+                user.balance -= fee
+                user.save()
+        else:  # LIMIT order - validate but don't deduct yet
             if action == 'buy':
-                # Check if user has sufficient balance for when order is filled
-                if amount > user.balance:
-                    return JsonResponse({'error': f'Insufficient balance. Available: KES {user.balance}'}, status=400)
-            else:  # sell
-                # Validate ownership
-                buy_quantity = Bet.objects.filter(
-                    user=user,
-                    market=market,
-                    outcome=outcome,
-                    action='BUY',
-                    option_id=option_id
-                ).aggregate(total=models.Sum('quantity'))['total'] or 0
-                
-                sell_quantity = Bet.objects.filter(
-                    user=user,
-                    market=market,
-                    outcome=outcome,
-                    action='SELL',
-                    option_id=option_id
-                ).aggregate(total=models.Sum('quantity'))['total'] or 0
-                
-                available_quantity = buy_quantity - sell_quantity
-                
-                if amount > Decimal(str(available_quantity)):
+                # Check if user has sufficient balance for when order is filled (amount + fee)
+                required_balance = total_cost
+                if required_balance > user.balance:
                     return JsonResponse({
-                        'error': f'Cannot sell {amount} shares. You only own {available_quantity} shares of {outcome} on this market.'
+                        'error': f'Insufficient balance for limit order. Need KES {total_cost} (KES {amount} + KES {fee} fee), but have KES {user.balance}'
                     }, status=400)
+            else:  # sell
+                if fee > user.balance:
+                    return JsonResponse({
+                        'error': f'Insufficient balance for trading fee. Need KES {fee}'
+                    }, status=400)
+        
+        # Validate shares for SELL orders (both MARKET and LIMIT)
+        if action == 'sell':
+            # Calculate available shares to sell for this market/outcome
+            buy_quantity = Bet.objects.filter(
+                user=user,
+                market=market,
+                outcome=outcome,
+                action='BUY',
+                option_id=option_id
+            ).aggregate(total=models.Sum('quantity'))['total'] or 0
+            
+            sell_quantity = Bet.objects.filter(
+                user=user,
+                market=market,
+                outcome=outcome,
+                action='SELL',
+                option_id=option_id
+            ).aggregate(total=models.Sum('quantity'))['total'] or 0
+            
+            available_quantity = buy_quantity - sell_quantity
+            
+            if amount > Decimal(str(available_quantity)):
+                return JsonResponse({
+                    'error': f'Cannot sell {amount} shares. You only own {available_quantity} shares of {outcome} on this market.'
+                }, status=400)
 
         # Create the bet with appropriate order_status
         order_status = 'FILLED' if order_type == 'MARKET' else 'PENDING'
@@ -321,6 +318,8 @@ def place_bet(request):
             market=market,
             outcome=outcome,
             amount=amount,
+            trading_fee=fee,
+            total_cost=total_cost,
             entry_probability=entry_probability,
             option_id=option_id,
             option_label=option_label,
@@ -342,11 +341,16 @@ def place_bet(request):
             Transaction.objects.create(
                 user=user,
                 type=transaction_type,
-                amount=amount,
+                amount=total_cost,
                 phone_number=user.phone_number,
                 status='COMPLETED',
                 description=description,
-                related_bet=bet
+                related_bet=bet,
+                metadata={
+                    'base_amount': str(amount),
+                    'trading_fee': str(fee),
+                    'fee_pct': float(settings.TRADING_FEE_PCT),
+                }
             )
         
         # Create notification
@@ -354,12 +358,12 @@ def place_bet(request):
             action_text = 'sold' if action == 'sell' else 'placed'
             notification_type = 'BET_SOLD' if action == 'sell' else 'BET_PLACED'
             notification_title = 'Position Closed' if action == 'sell' else 'Bet Placed'
-            message = f'Your prediction of {outcome} for KES {amount} has been {action_text}'
+            message = f'Your prediction of {outcome} for KES {amount} has been {action_text} (Fee: KES {fee})'
         else:  # LIMIT order
             notification_type = 'LIMIT_ORDER_PLACED'
             notification_title = 'Limit Order Placed'
             order_action = 'sell' if action == 'sell' else 'buy'
-            message = f'Limit {order_action} order placed: {quantity} shares at {limit_price}% for {outcome}'
+            message = f'Limit {order_action} order placed: {quantity} shares at {limit_price}% for {outcome} (Fee: KES {fee})'
         
         create_notification(
             user=user,
