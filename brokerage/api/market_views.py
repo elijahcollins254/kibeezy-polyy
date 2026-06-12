@@ -26,22 +26,28 @@ class MarketListView(APIView):
             try:
                 params = {'q': q, 'limit': 100}
                 markets = adapter.get_markets(params=params)
-                return Response(markets)
+                response = Response(markets)
             except Exception as e:
                 logger.warning(f"Failed to search Polymarket markets: {str(e)}")
-                return Response([], status=status.HTTP_200_OK)
-
-        # By default, fetch Polymarket markets
-        try:
-            polymarkets = adapter.get_markets(params={'limit': 100})
-            logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets")
-            return Response(polymarkets)
-        except Exception as e:
-            logger.error(f"Failed to fetch Polymarket markets: {str(e)}", exc_info=True)
-            # Fallback to local markets only if Polymarket fetch fails
-            qs = Market.objects.filter(is_approved=True).order_by('-created_at')[:200]
-            out = MarketSerializer(qs, many=True)
-            return Response(out.data)
+                response = Response([], status=status.HTTP_200_OK)
+        else:
+            # By default, fetch Polymarket markets
+            try:
+                polymarkets = adapter.get_markets(params={'limit': 100})
+                logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets")
+                response = Response(polymarkets)
+            except Exception as e:
+                logger.error(f"Failed to fetch Polymarket markets: {str(e)}", exc_info=True)
+                # Fallback to local markets only if Polymarket fetch fails
+                qs = Market.objects.filter(is_approved=True).order_by('-created_at')[:200]
+                out = MarketSerializer(qs, many=True)
+                response = Response(out.data)
+        
+        # Disable caching for live market data
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        return response
 
 
 class MarketDetailView(APIView):
@@ -67,11 +73,18 @@ class MarketDetailView(APIView):
         if request.path.endswith('/trades/'):
             try:
                 trades = adapter.get_trade_history(external_id, limit=int(request.query_params.get('limit', 100)))
-                return Response(trades)
+                response = Response(trades, status=status.HTTP_200_OK)
+                # Disable caching for live trade data
+                response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response['Pragma'] = 'no-cache'
+                response['Expires'] = '0'
+                return response
             except Exception as e:
                 logger.error(f"Failed to fetch trade history for {external_id}: {str(e)}", exc_info=True)
                 # Return empty trades list as fallback instead of error
-                return Response([], status=status.HTTP_200_OK)
+                response = Response([], status=status.HTTP_200_OK)
+                response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                return response
 
         # Positions endpoint (requires authentication)
         if request.path.endswith('/positions/'):
