@@ -46,6 +46,7 @@ class MarketAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    actions = ['approve_markets', 'reject_markets']
     
     def get_status(self, obj):
         if obj.is_approved:
@@ -66,6 +67,24 @@ class MarketAdmin(admin.ModelAdmin):
         elif not obj.is_approved:
             obj.approved_at = None
         super().save_model(request, obj, form, change)
+    
+    def approve_markets(self, request, queryset):
+        """Approve selected markets in bulk."""
+        count = 0
+        for market in queryset:
+            if not market.is_approved:
+                market.is_approved = True
+                market.approved_at = timezone.now()
+                market.save()
+                count += 1
+        self.message_user(request, f'{count} market(s) approved successfully.')
+    approve_markets.short_description = '✓ Approve selected markets'
+    
+    def reject_markets(self, request, queryset):
+        """Reject (unapprove) selected markets in bulk."""
+        count = queryset.filter(is_approved=True).update(is_approved=False, approved_at=None)
+        self.message_user(request, f'{count} market(s) rejected.')
+    reject_markets.short_description = '⊘ Reject selected markets'
 
 
 @admin.register(models.Position)

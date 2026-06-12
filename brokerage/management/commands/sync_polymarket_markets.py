@@ -78,11 +78,37 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         adapter = PolymarketAdapter()
-        params = {'limit': options.get('limit')}
-        self.stdout.write('Fetching markets from Polymarket...')
-        markets = adapter.get_markets(params=params)
+        limit = options.get('limit')
+        
+        self.stdout.write(f'Fetching markets from Polymarket (limit: {limit})...')
+        
+        # Fetch markets with pagination (API batches at 100)
+        all_markets = []
+        offset = 0
+        batch_size = 100
+        
+        while len(all_markets) < limit:
+            remaining = limit - len(all_markets)
+            fetch_size = min(batch_size, remaining)
+            
+            params = {'limit': fetch_size, 'offset': offset}
+            self.stdout.write(f'  Fetching batch: offset={offset}, limit={fetch_size}...')
+            
+            try:
+                batch = adapter.get_markets(params=params)
+                if not batch:
+                    self.stdout.write(f'  No more markets available after {len(all_markets)} total')
+                    break
+                
+                all_markets.extend(batch)
+                offset += fetch_size
+                self.stdout.write(f'  Got {len(batch)} markets (total: {len(all_markets)})')
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'Error fetching batch at offset {offset}: {e}'))
+                break
+        
         count = 0
-        for m in markets:
+        for m in all_markets:
             external_id = m.get('id') or m.get('market_id') or m.get('token')
             if not external_id:
                 continue
@@ -100,4 +126,5 @@ class Command(BaseCommand):
                 }
             )
             count += 1
+        
         self.stdout.write(self.style.SUCCESS(f'Synced {count} markets'))
