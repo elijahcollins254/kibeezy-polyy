@@ -90,13 +90,8 @@ def get_authenticated_user(request):
 
 
 def list_markets(request):
-    """
-    List all markets, grouping markets with the same question.
-    Markets with identical questions are grouped as OPTION_LIST markets on the frontend.
-    This creates a Polymarket-like UI where options are shown as variants of one market.
-    """
-    markets = Market.objects.all().order_by('question', 'id')
-    grouped_markets = {}
+    markets = Market.objects.all()
+    markets_data = []
     
     for market in markets:
         # Determine effective status based on trading_end_time
@@ -114,7 +109,7 @@ def list_markets(request):
             'yes_probability': market.yes_probability,
             'options': market.options,
             'volume': market.volume,
-            'status': effective_status,
+            'status': effective_status,  # Use effective status
             'trading_end_time': market.trading_end_time.isoformat() if market.trading_end_time else None,
             'end_date': market.end_date,
             'resolved_outcome': market.resolved_outcome,
@@ -132,80 +127,7 @@ def list_markets(request):
             market_dict['yes_multiplier'] = round(100 / market.yes_probability, 2)
             market_dict['no_multiplier'] = round(100 / (100 - market.yes_probability), 2)
         
-        # Group markets by question (for creating Polymarket-style multi-option displays)
-        question_key = market.question
-        
-        if question_key not in grouped_markets:
-            # First market with this question - use as base
-            grouped_markets[question_key] = {
-                'primary_market': market_dict,
-                'related_markets': []
-            }
-        else:
-            # Additional market with same question - add to related markets
-            grouped_markets[question_key]['related_markets'].append(market_dict)
-    
-    # Convert grouped markets into final format
-    markets_data = []
-    for question, group in grouped_markets.items():
-        primary = group['primary_market']
-        related = group['related_markets']
-        
-        # If there are no related markets, just return the primary market as-is
-        if not related:
-            markets_data.append(primary)
-        else:
-            # If there are related markets with same question, convert to OPTION_LIST format
-            # This groups them together as options for a single market card
-            options = []
-            
-            # Add primary market as first option
-            options.append({
-                'id': primary['id'],
-                'market_id': primary['id'],
-                'label': primary.get('description', 'Yes option'),
-                'yes_probability': primary['yes_probability'],
-                'no_probability': primary['no_probability'],
-                'volume': primary.get('volume', 'KES 0'),
-                'status': primary['status'],
-            })
-            
-            # Add related markets as additional options
-            for related_market in related:
-                options.append({
-                    'id': related_market['id'],
-                    'market_id': related_market['id'],
-                    'label': related_market.get('description', 'No option'),
-                    'yes_probability': related_market['yes_probability'],
-                    'no_probability': related_market['no_probability'],
-                    'volume': related_market.get('volume', 'KES 0'),
-                    'status': related_market['status'],
-                })
-            
-            # Return grouped market as OPTION_LIST
-            grouped_market = {
-                'id': primary['id'],  # Use primary market ID for routing
-                'question': primary['question'],
-                'category': primary['category'],
-                'description': primary['description'],
-                'image_url': primary['image_url'],
-                'market_type': 'OPTION_LIST',  # Force to OPTION_LIST for display
-                'options': options,
-                'volume': primary['volume'],
-                'status': primary['status'],
-                'trading_end_time': primary['trading_end_time'],
-                'end_date': primary['end_date'],
-                'resolved_outcome': primary['resolved_outcome'],
-                'created_at': primary['created_at'],
-                'yes_probability': primary['yes_probability'],  # Primary market's probability
-                'no_probability': primary['no_probability'],
-                # LMSR state from primary market
-                'q_yes': primary['q_yes'],
-                'q_no': primary['q_no'],
-                'b': primary['b'],
-            }
-            
-            markets_data.append(grouped_market)
+        markets_data.append(market_dict)
     
     return JsonResponse(markets_data, safe=False)
 
@@ -716,7 +638,7 @@ def market_chat(request, market_id):
 
 @require_http_methods(["GET"])
 def market_details(request, market_id):
-    """Return market public details for comments, top holders, positions, and activity."""
+    """Return market public details for comments, top holders, positions, activity, and related markets."""
     try:
         try:
             market = Market.objects.get(id=market_id)
@@ -807,6 +729,23 @@ def market_details(request, market_id):
             for bet in bets
         ]
 
+        # Get related markets (markets with same question) to show as options
+        related_markets = Market.objects.filter(question=market.question).exclude(id=market_id).order_by('id')
+        related_options = []
+        
+        for related_market in related_markets:
+            related_options.append({
+                'id': related_market.id,
+                'question': related_market.question,
+                'description': related_market.description,
+                'image_url': related_market.image_url,
+                'yes_probability': related_market.yes_probability,
+                'no_probability': 100 - related_market.yes_probability,
+                'volume': related_market.volume,
+                'status': related_market.status,
+                'end_date': related_market.end_date,
+            })
+
         return JsonResponse({
             'market_id': market.id,
             'comments': comment_data,
@@ -816,6 +755,7 @@ def market_details(request, market_id):
                 'no': no_holders,
             },
             'activity': activity,
+            'related_markets': related_options,  # Markets with same question shown as options
         })
     except Exception as e:
         logger.error(f"Market details error: {str(e)}")
