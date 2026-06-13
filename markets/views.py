@@ -380,6 +380,7 @@ def place_bet(request):
                 market=market,
                 outcome=outcome,
                 action='SELL',
+                order_status='FILLED',
                 option_id=option_id
             ).aggregate(total=models.Sum('quantity'))['total'] or 0
             
@@ -625,6 +626,7 @@ def get_user_available_shares(request, market_id):
         'market': market,
         'outcome': outcome,
         'action': 'SELL',
+        'order_status': 'FILLED',
     }
     if option_id:
         sell_filter_kwargs['option_id'] = option_id
