@@ -98,6 +98,8 @@ class Market(models.Model):
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     approved_at = models.DateTimeField(null=True, blank=True)
+    # Parent-child grouping for related markets (e.g., "What will happen before GTA VI?" as parent)
+    parent_market = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
 
     class Meta:
         ordering = ['-created_at']
