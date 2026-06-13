@@ -8,6 +8,7 @@ import logging
 from brokerage.models import Market
 from brokerage.api.market_serializers import MarketSerializer
 from brokerage.services.polymarket.adapter import PolymarketAdapter
+from brokerage.utils.category import extract_category
 from django.core.cache import cache
 from brokerage.publish import publish_market_event
 
@@ -42,6 +43,11 @@ class MarketListView(APIView):
                     # Fallback to Polymarket API if not in database
                     params = {'q': q, 'limit': 100}
                     markets = adapter.get_markets(params=params)
+                    # Add category extraction to raw Polymarket markets
+                    if isinstance(markets, list):
+                        for market in markets:
+                            if 'category' not in market or market['category'] == 'Other':
+                                market['category'] = extract_category(market)
                     response = Response(markets)
             except Exception as e:
                 logger.warning(f"Failed to search markets: {str(e)}")
@@ -60,6 +66,11 @@ class MarketListView(APIView):
                 else:
                     # Fallback to Polymarket API if no approved markets in database
                     polymarkets = adapter.get_markets(params={'limit': 100})
+                    # Add category extraction to raw Polymarket markets
+                    if isinstance(polymarkets, list):
+                        for market in polymarkets:
+                            if 'category' not in market or market['category'] == 'Other':
+                                market['category'] = extract_category(market)
                     logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets from API")
                     response = Response(polymarkets)
             except Exception as e:
