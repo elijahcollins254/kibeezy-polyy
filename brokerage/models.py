@@ -87,6 +87,20 @@ class Market(models.Model):
         ('Other', 'Other'),
     ]
     
+    POLYMARKET_STATUS_CHOICES = [
+        ('OPEN', 'Open'),
+        ('CLOSED', 'Closed'),
+        ('RESOLVED', 'Resolved'),
+        ('INVALID', 'Invalid'),
+    ]
+    
+    SETTLEMENT_STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+    ]
+    
     external_id = models.CharField(max_length=128, unique=True)
     title = models.CharField(max_length=255)
     question = models.TextField(blank=True, null=True, help_text="The actual market question")
@@ -100,6 +114,38 @@ class Market(models.Model):
     approved_at = models.DateTimeField(null=True, blank=True)
     # Parent-child grouping for related markets (e.g., "What will happen before GTA VI?" as parent)
     parent_market = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
+    
+    # Polymarket-specific resolution tracking
+    polymarket_status = models.CharField(
+        max_length=32,
+        choices=POLYMARKET_STATUS_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Market status on Polymarket (OPEN, CLOSED, RESOLVED)"
+    )
+    resolution_outcome = models.CharField(
+        max_length=10,
+        choices=[('Yes', 'Yes'), ('No', 'No'), ('INVALID', 'Invalid')],
+        null=True,
+        blank=True,
+        help_text="Resolved outcome from Polymarket"
+    )
+    resolution_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=8,
+        null=True,
+        blank=True,
+        help_text="Final market price at resolution (0-1)"
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    settlement_status = models.CharField(
+        max_length=32,
+        choices=SETTLEMENT_STATUS_CHOICES,
+        default='PENDING',
+        help_text="Settlement status for user positions"
+    )
+    settlement_started_at = models.DateTimeField(null=True, blank=True)
+    settlement_completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -127,6 +173,12 @@ class Position(models.Model):
 
 class Order(models.Model):
     STATUS_CHOICES = [('PENDING', 'Pending'), ('OPEN', 'Open'), ('FILLED', 'Filled'), ('CANCELLED', 'Cancelled'), ('REJECTED', 'Rejected')]
+    SETTLEMENT_RESULT_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('WON', 'Won'),
+        ('LOST', 'Lost'),
+    ]
+    
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='orders')
     market = models.ForeignKey(Market, on_delete=models.CASCADE, related_name='orders')
     side = models.CharField(max_length=4)  # 'BUY'|'SELL'
@@ -135,6 +187,11 @@ class Order(models.Model):
     external_order_id = models.CharField(max_length=128, null=True, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='PENDING')
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    # Settlement fields
+    payout = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True, help_text="Payout amount for resolved market")
+    settlement_result = models.CharField(max_length=32, choices=SETTLEMENT_RESULT_CHOICES, default='PENDING')
+    settled_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.user} {self.side} {self.size}@{self.price} ({self.status})"

@@ -112,3 +112,113 @@ def sync_polymarket_markets_task(self, limit: int = 500):
         return {'status': 'ok', 'limit': limit}
     except Exception as e:
         raise e
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def settle_polymarket_market(self, market_id: int):
+    """
+    Settle all user positions in a resolved Polymarket market.
+    
+    This task:
+    1. Validates market is resolved with outcome
+    2. Calculates P&L for each user order (win/loss)
+    3. Creates payout transactions for winners
+    4. Updates order settlement status
+    
+    Args:
+        market_id: ID of the resolved market
+    
+    Returns:
+        dict with settlement summary
+    """
+    try:
+        from brokerage.models import Market
+        from brokerage.services.settlement import PolymarketSettlementService
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        market = Market.objects.get(id=market_id)
+        logger.info(f"Starting settlement for market {market_id}: {market.question}")
+        
+        result = PolymarketSettlementService.settle_market(market)
+        
+        logger.info(f"Market {market_id} settlement result: {result}")
+        return result
+    
+    except Market.DoesNotExist:
+        logger.error(f"Market {market_id} not found")
+        return {'status': 'error', 'error': 'market_not_found'}
+    except Exception as e:
+        logger.error(f"Settlement error for market {market_id}: {e}", exc_info=True)
+        # Retry with exponential backoff
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+
+
+@shared_task(bind=True)
+def start_polymarket_websocket_stream(self, network: str = 'mainnet', market_ids: list = None):
+    """
+    Start the Polymarket WebSocket streamer in an asyncio event loop.
+    
+    This task should be run as a persistent worker that streams real-time
+    market data and order updates from Polymarket.
+    
+    Args:
+        network: 'mainnet' or 'testnet'
+        market_ids: Optional list of market IDs to subscribe to
+    
+    Returns:
+        dict with streamer status
+    """
+    import asyncio
+    import logging
+    from brokerage.services.polymarket.websocket_streamer import PolymarketWebSocketStreamer
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting WebSocket stream on {network}")
+    
+    try:
+        # Create streamer
+        streamer = PolymarketWebSocketStreamer(network=network)
+        
+        # Subscribe to markets if provided
+        async def setup_and_stream():
+            await streamer.connect()
+            
+            if market_ids:
+                from brokerage.models import Market
+                for market_id in market_ids:
+                    try:
+                        market = Market.objects.get(id=market_id)
+                        token_ids = [
+                            market.yes_token_id,
+                            market.no_token_id,
+                        ]
+                        token_ids = [t for t in token_ids if t]
+                        
+                        if token_ids:
+                            await streamer.subscribe_to_market(market_id, token_ids)
+                            logger.info(f"Subscribed to market {market_id}")
+                    except Market.DoesNotExist:
+                        logger.warning(f"Market {market_id} not found")
+            
+            # Listen for messages (blocking)
+            await streamer._listen()
+        
+        # Run async event loop
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(setup_and_stream())
+        except KeyboardInterrupt:
+            logger.info("WebSocket stream interrupted")
+        finally:
+            asyncio.run_coroutine_threadsafe(streamer.disconnect(), loop)
+            loop.close()
+        
+        return {'status': 'ok', 'network': network}
+    
+    except Exception as e:
+        logger.error(f"WebSocket stream error: {e}", exc_info=True)
+        return {'status': 'error', 'error': str(e)}
+
