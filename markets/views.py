@@ -661,12 +661,12 @@ def market_chat(request, market_id):
                     {
                         'id': msg.id,
                         'user_id': msg.user.id,
-                        'user_name': msg.user.full_name,
+                        'user_name': f"@{msg.user.username}" if msg.user.username else msg.user.full_name,
                         'phone_number': msg.user.phone_number,
                         'message': msg.message,
                         'created_at': msg.created_at.isoformat(),
                         'parent_id': msg.parent_id,
-                        'parent_user_name': msg.parent.user.full_name if msg.parent else None,
+                        'parent_user_name': f"@{msg.parent.user.username}" if msg.parent and msg.parent.user.username else (msg.parent.user.full_name if msg.parent else None),
                     }
                     for msg in messages
                 ]
@@ -702,12 +702,12 @@ def market_chat(request, market_id):
             'message': {
                 'id': chat_message.id,
                 'user_id': user.id,
-                'user_name': user.full_name,
+                'user_name': f"@{user.username}" if user.username else user.full_name,
                 'phone_number': user.phone_number,
                 'message': chat_message.message,
                 'created_at': chat_message.created_at.isoformat(),
                 'parent_id': chat_message.parent_id,
-                'parent_user_name': chat_message.parent.user.full_name if chat_message.parent else None,
+                'parent_user_name': f"@{chat_message.parent.user.username}" if chat_message.parent and chat_message.parent.user.username else (chat_message.parent.user.full_name if chat_message.parent else None),
             }
         }, status=201)
     except json.JSONDecodeError:
@@ -734,12 +734,12 @@ def market_details(request, market_id):
             {
                 'id': msg.id,
                 'user_id': msg.user.id,
-                'user_name': msg.user.full_name,
+                'user_name': f"@{msg.user.username}" if msg.user.username else msg.user.full_name,
                 'phone_number': msg.user.phone_number,
                 'message': msg.message,
                 'created_at': msg.created_at.isoformat(),
                 'parent_id': msg.parent_id,
-                'parent_user_name': msg.parent.user.full_name if msg.parent else None,
+                'parent_user_name': f"@{msg.parent.user.username}" if msg.parent and msg.parent.user.username else (msg.parent.user.full_name if msg.parent else None),
             }
             for msg in comments
         ]
@@ -749,7 +749,7 @@ def market_details(request, market_id):
             {
                 'id': bet.id,
                 'user_id': bet.user.id,
-                'user_name': bet.user.full_name,
+                'user_name': f"@{bet.user.username}" if bet.user.username else bet.user.full_name,
                 'outcome': bet.outcome,
                 'order_type': bet.order_type,
                 'limit_price': str(bet.limit_price) if bet.limit_price is not None else None,
@@ -769,7 +769,7 @@ def market_details(request, market_id):
             if key not in holder_map:
                 holder_map[key] = {
                     'user_id': bet.user.id,
-                    'user_name': bet.user.full_name,
+                    'user_name': f"@{bet.user.username}" if bet.user.username else bet.user.full_name,
                     'outcome': bet.outcome,
                     'shares': 0,
                     'average_price': Decimal('0.00'),
@@ -800,7 +800,7 @@ def market_details(request, market_id):
             {
                 'id': bet.id,
                 'user_id': bet.user.id,
-                'user_name': bet.user.full_name,
+                'user_name': f"@{bet.user.username}" if bet.user.username else bet.user.full_name,
                 'action': f"bought {bet.quantity or 1} {bet.outcome}",
                 'amount': str(bet.amount),
                 'limit_price': str(bet.limit_price) if bet.limit_price is not None else None,

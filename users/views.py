@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import Sum, Q, Value, DecimalField
 from django.db.models.functions import Coalesce
@@ -14,6 +15,28 @@ from markets.utils.price_calculations import PAYOUT_PER_SHARE
 from .jwt_auth import generate_jwt_token
 
 logger = logging.getLogger(__name__)
+
+def generate_unique_username(full_name: str) -> str:
+    """Generate a unique username from full_name"""
+    # Convert to lowercase and remove special characters
+    base_username = re.sub(r'[^a-z0-9_-]', '', full_name.lower().replace(' ', '_'))
+    
+    # Ensure it's 3-30 characters
+    if len(base_username) < 3:
+        base_username = base_username.ljust(3, '_')
+    elif len(base_username) > 30:
+        base_username = base_username[:30]
+    
+    # Check if username is available
+    username = base_username
+    counter = 1
+    while CustomUser.objects.filter(username=username).exists():
+        # Append number to make it unique
+        suffix = str(counter)
+        username = (base_username[:30 - len(suffix)] + suffix)
+        counter += 1
+    
+    return username
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -59,6 +82,7 @@ def signup_view(request):
             'user': {
                 'phone_number': user.phone_number, 
                 'full_name': user.full_name,
+                'username': user.username,
                 'id': user.id,
                 'is_staff': user.is_staff,
                 'is_superuser': user.is_superuser,
@@ -107,6 +131,7 @@ def login_view(request):
                 'user': {
                     'phone_number': user.phone_number, 
                     'full_name': user.full_name,
+                    'username': user.username,
                     'id': user.id,
                     'kyc_verified': user.kyc_verified,
                     'phone_locked': user.phone_locked,
@@ -142,6 +167,7 @@ def check_auth(request):
             'user': {
                 'phone_number': request.user.phone_number,
                 'full_name': request.user.full_name,
+                'username': request.user.username,
                 'id': request.user.id,
                 'balance': str(request.user.balance),
                 'kyc_verified': request.user.kyc_verified,
@@ -249,6 +275,7 @@ def update_profile_view(request):
             'user': {
                 'phone_number': user.phone_number,
                 'full_name': user.full_name,
+                'username': user.username,
                 'balance': str(user.balance),
                 'date_joined': user.date_joined.isoformat() if user.date_joined else None,
                 'phone_locked': user.phone_locked,
@@ -281,6 +308,7 @@ def leaderboard_view(request):
             {
                 'id': user.id,
                 'full_name': user.full_name,
+                'username': user.username,
                 'phone_number': user.phone_number,
                 'balance': str(user.balance),
                 'total_winnings': str(user.total_winnings),
@@ -298,7 +326,7 @@ def leaderboard_view(request):
         top_wins_data = [
             {
                 'id': bet.id,
-                'user_name': bet.user.full_name[:20] if bet.user.full_name else bet.user.phone_number,
+                'user_name': f"@{bet.user.username}" if bet.user.username else bet.user.full_name[:20],
                 'market_title': bet.market.question[:50],
                 'profit': int(float(bet.payout or 0) - float(bet.amount)),
                 'avatar_color': f'bg-{["blue", "green", "purple", "orange", "pink", "cyan"][i % 6]}-500',
