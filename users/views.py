@@ -246,6 +246,7 @@ def update_profile_view(request):
         data = json.loads(request.body)
         full_name = data.get('full_name')
         phone_number = data.get('phone_number')
+        username = data.get('username')
         
         if full_name:
             try:
@@ -253,6 +254,21 @@ def update_profile_view(request):
                 user.full_name = full_name
             except ValidationError as e:
                 return JsonResponse({'error': e.message}, status=400)
+        
+        if username:
+            # Only allow setting username once
+            if user.username:
+                return JsonResponse({'error': 'Username cannot be changed once set'}, status=400)
+            
+            # Check if username is already in use
+            if CustomUser.objects.filter(username=username).exists():
+                return JsonResponse({'error': 'Username already taken'}, status=400)
+            
+            # Basic validation: alphanumeric and underscores only, 3-30 chars
+            if not (3 <= len(username) <= 30 and username.isalnum()):
+                return JsonResponse({'error': 'Username must be 3-30 characters and alphanumeric'}, status=400)
+            
+            user.username = username
         
         if phone_number:
             # Check if phone is locked
