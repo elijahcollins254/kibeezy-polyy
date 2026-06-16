@@ -190,6 +190,7 @@ class TradingService:
     def place_polymarket_order(
         self,
         user,
+        market_id: str,
         token_id: str,
         side: str,
         size: float,
@@ -198,9 +199,11 @@ class TradingService:
     ) -> Dict[str, Any]:
         """
         Place an order on Polymarket using py-clob-client-v2.
+        Creates local Order and Fill records to sync with local Position model.
         
         Args:
             user: Django user object
+            market_id: Local market ID to associate with this order
             token_id: Polymarket token ID (from market.clobTokenIds)
             side: 'BUY' or 'SELL'
             size: Number of shares (or USD for market orders)
@@ -208,9 +211,15 @@ class TradingService:
             order_type: 'market' or 'limit'
         
         Returns:
-            Dict with order result
+            Dict with order result including local order data
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
+            # Get or create local market
+            market, _ = Market.objects.get_or_create(external_id=market_id, defaults={'title': market_id})
+            
             # Calculate trading fee on the order size
             size_decimal = Decimal(str(size))
             fee, total_cost = FeeService.get_total_cost(size_decimal)
@@ -220,6 +229,19 @@ class TradingService:
             if total_cost > user_balance:
                 raise ValueError(f"Insufficient balance. Need {total_cost}, have {user_balance}")
             
+            # Create local Order record in PENDING state
+            price_decimal = Decimal(str(price))
+            order = Order.objects.create(
+                user=user,
+                market=market,
+                side=side,
+                size=size_decimal,
+                price=price_decimal,
+                status='PENDING'
+            )
+            logger.info(f"Created local Order record: {order.id} for user {user.id}")
+            
+            # Place order on Polymarket
             if order_type == 'market':
                 # Market order: amount is in USD
                 response = self.adapter.place_market_order(
@@ -236,31 +258,115 @@ class TradingService:
                     side=side,
                 )
             
-            # Extract order ID and status from response
-            order_id = response.get('id') or response.get('order_id')
+            # Extract order ID from response
+            polymarket_order_id = response.get('id') or response.get('order_id')
+            order.external_order_id = polymarket_order_id
             
-            # Log the order
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"Polymarket {order_type} order placed: {side} {size} token={token_id} order_id={order_id} (Fee: {fee})")
+            # Process fills from response (market orders typically fill immediately or partially)
+            fills_data = response.get('fills', []) or response.get('result', {}).get('fills', [])
             
-            # Return success response with fee info
+            if fills_data:
+                # Order was filled (market order or immediate fill)
+                total_filled = Decimal('0')
+                for fill_data in fills_data:
+                    fill_size = Decimal(str(fill_data.get('size', 0)))
+                    fill_price = Decimal(str(fill_data.get('price', price)))
+                    
+                    # Create Fill record
+                    fill = Fill.objects.create(
+                        order=order,
+                        external_fill_id=fill_data.get('id') or fill_data.get('fill_id'),
+                        size=fill_size,
+                        price=fill_price
+                    )
+                    total_filled += fill_size
+                    logger.info(f"Created Fill record: {fill.id} for Order {order.id} ({fill_size}@{fill_price})")
+                
+                # Update order status to FILLED if fully filled
+                if total_filled >= size_decimal:
+                    order.status = 'FILLED'
+                elif total_filled > 0:
+                    order.status = 'OPEN'  # Partially filled
+                
+                order.save()
+                
+                # Update Position with weighted average (only if there are fills)
+                self._update_position_from_fills(user, market, order)
+            else:
+                # No fills in response - order is pending (limit orders typically)
+                order.status = 'OPEN'
+                order.save()
+            
+            logger.info(f"Polymarket {order_type} order placed: {side} {size} token={token_id} polymarket_id={polymarket_order_id} (Fee: {fee})")
+            
+            # Return success response with local order data
             return {
                 'success': True,
-                'order_id': order_id,
+                'order_id': order.id,  # Local order ID
+                'polymarket_order_id': polymarket_order_id,
                 'type': order_type,
                 'side': side,
-                'size': size,
-                'price': price,
+                'size': float(size),
+                'price': float(price),
                 'token_id': token_id,
+                'status': order.status,
                 'fee': float(fee),
                 'total_cost': float(total_cost),
-                'response': response,  # Include full response for debugging
+                'fills_count': len(fills_data) if fills_data else 0,
             }
             
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to place Polymarket order: {e}", exc_info=True)
             raise
+    
+    def _update_position_from_fills(self, user, market: Market, order: Order):
+        """
+        Update Position model based on fills from an order.
+        Uses weighted average price calculation.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Get all fills for this order
+        fills = order.fills.all()
+        if not fills.exists():
+            return
+        
+        # Get or create position
+        position, created = Position.objects.get_or_create(
+            user=user,
+            market=market,
+            defaults={'quantity': Decimal('0'), 'average_price': Decimal('0')}
+        )
+        
+        # Calculate total fill size and cost
+        total_fill_size = Decimal('0')
+        total_fill_cost = Decimal('0')
+        
+        for fill in fills:
+            total_fill_size += fill.size
+            total_fill_cost += fill.size * fill.price
+        
+        if total_fill_size == 0:
+            return
+        
+        # Update position based on order side
+        if order.side.upper() == 'BUY':
+            prev_qty = position.quantity
+            prev_avg = position.average_price
+            
+            new_qty = prev_qty + total_fill_size
+            if new_qty > 0:
+                new_avg = ((prev_qty * prev_avg) + total_fill_cost) / new_qty
+            else:
+                new_avg = Decimal('0')
+            
+            position.quantity = new_qty
+            position.average_price = new_avg
+        else:  # SELL
+            position.quantity -= total_fill_size
+            # For sells, we could calculate realized P&L
+        
+        position.save()
+        logger.info(f"Updated Position for user {user.id} market {market.id}: qty={position.quantity}, avg={position.average_price}")
 

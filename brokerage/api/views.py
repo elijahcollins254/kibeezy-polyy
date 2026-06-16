@@ -70,6 +70,7 @@ class PlaceOrderView(APIView):
                 
                 result = svc.place_polymarket_order(
                     user=user,
+                    market_id=data['market_id'],
                     token_id=token_id,
                     side=data['side'],
                     size=float(data['size']),
