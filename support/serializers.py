@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SupportMessage, SupportTicket
+from .models import SupportMessage, SupportTicket, ChatMessage
 
 class SupportMessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(source='sender.full_name', read_only=True)
