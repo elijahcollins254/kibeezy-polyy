@@ -109,6 +109,7 @@ def list_markets(request):
             'id': market.id,
             'question': market.question,
             'category': market.category,
+            'subcategory': market.subcategory,
             'description': market.description,
             'image_url': market.image_url,
             'market_type': market.market_type,
@@ -188,6 +189,7 @@ def list_markets(request):
                 'id': primary['id'],  # Use primary market ID for routing
                 'question': primary['question'],
                 'category': primary['category'],
+                'subcategory': primary.get('subcategory'),
                 'description': primary['description'],
                 'image_url': primary['image_url'],
                 'market_type': 'OPTION_LIST',  # Force to OPTION_LIST for display
@@ -1149,5 +1151,4 @@ def get_bitcoin_price(request):
             {'error': 'Failed to fetch Bitcoin price'},
             status=500
         )
-
 

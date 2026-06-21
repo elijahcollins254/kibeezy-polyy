@@ -139,3 +139,80 @@ def extract_category(market_data):
     
     return 'Other'
 
+
+def extract_subcategory(market_data, category):
+    """
+    Extract or infer subcategory/league/topic from market data given its category.
+    """
+    if not category or category == 'Other':
+        return None
+
+    # Check tags first for subcategory if available
+    tags = market_data.get('tags', [])
+    if isinstance(tags, list) and len(tags) > 0:
+        for tag in tags:
+            tag_str = str(tag).upper()
+            if tag_str in ['NFL', 'NBA', 'EPL', 'BTC', 'ETH', 'SOL', 'AI', 'UCL']:
+                mapping = {'BTC': 'Bitcoin', 'ETH': 'Ethereum', 'SOL': 'Solana', 'UCL': 'Champions League'}
+                return mapping.get(tag_str, tag_str)
+
+    # Infer from text
+    text_parts = [
+        market_data.get('title') or '',
+        market_data.get('question') or '',
+        market_data.get('description') or '',
+    ]
+    text = ' '.join(text_parts).lower()
+
+    if category == 'Sports':
+        if any(_contains_keyword(text, kw) for kw in ['nfl', 'super bowl', 'superbowl', 'patriots', 'seahawks', 'chiefs']):
+            return 'NFL'
+        if any(_contains_keyword(text, kw) for kw in ['nba', 'basketball', 'lakers', 'celtics', 'warriors', 'curry', 'lebron']):
+            return 'NBA'
+        if any(_contains_keyword(text, kw) for kw in ['epl', 'premier league', 'chelsea', 'arsenal', 'liverpool', 'manchester united', 'man city', 'manchester city', 'spurs', 'tottenham']):
+            return 'EPL'
+        if any(_contains_keyword(text, kw) for kw in ['la liga', 'la-liga', 'real madrid', 'barcelona', 'laliga']):
+            return 'La Liga'
+        if any(_contains_keyword(text, kw) for kw in ['champions league', 'ucl', 'champions-league']):
+            return 'Champions League'
+        if any(_contains_keyword(text, kw) for kw in ['tennis', 'wimbledon', 'us open', 'nadal', 'federer', 'djokovic', 'open']):
+            return 'Tennis'
+        if any(_contains_keyword(text, kw) for kw in ['f1', 'formula 1', 'formula-1', 'grand prix', 'hamilton', 'verstappen']):
+            return 'Formula 1'
+
+    elif category == 'Crypto':
+        if any(_contains_keyword(text, kw) for kw in ['bitcoin', 'btc', 'satoshi']):
+            return 'Bitcoin'
+        if any(_contains_keyword(text, kw) for kw in ['ethereum', 'eth', 'vitalik']):
+            return 'Ethereum'
+        if any(_contains_keyword(text, kw) for kw in ['solana', 'sol']):
+            return 'Solana'
+
+    elif category == 'Politics':
+        if any(_contains_keyword(text, kw) for kw in ['biden', 'trump', 'harris', 'presidential', 'democrat', 'republican', 'senate', 'congress', 'white house']):
+            return 'US Politics'
+        if any(_contains_keyword(text, kw) for kw in ['ruto', 'odinga', 'kenya', 'kenyan', 'gachagua', 'nairobi']):
+            return 'Kenyan Politics'
+        if any(_contains_keyword(text, kw) for kw in ['uk', 'starmer', 'sunak', 'labour', 'tory', 'parliament']):
+            return 'UK Politics'
+
+    elif category == 'Technology':
+        if any(_contains_keyword(text, kw) for kw in ['ai', 'openai', 'chatgpt', 'gpt', 'claude', 'gemini', 'anthropic', 'sam altman', 'nvidia']):
+            return 'AI'
+        if any(_contains_keyword(text, kw) for kw in ['apple', 'iphone', 'macbook', 'ios', 'ipad']):
+            return 'Apple'
+        if any(_contains_keyword(text, kw) for kw in ['gta', 'grand theft auto', 'rockstar', 'playstation', 'xbox', 'nintendo', 'gaming', 'game']):
+            return 'Gaming'
+        if any(_contains_keyword(text, kw) for kw in ['spacex', 'starship', 'mars', 'nasa', 'moon', 'sls', 'rocket']):
+            return 'Space'
+
+    elif category == 'Geopolitics':
+        if any(_contains_keyword(text, kw) for kw in ['russia', 'ukraine', 'putin', 'zelensky', 'kiev', 'moscow', 'nato']):
+            return 'Russia-Ukraine'
+        if any(_contains_keyword(text, kw) for kw in ['israel', 'gaza', 'hamas', 'iran', 'palestine', 'middle east', 'hezbollah', 'lebanon']):
+            return 'Middle East'
+        if any(_contains_keyword(text, kw) for kw in ['china', 'taiwan', 'south china sea', 'beijing', 'taipei']):
+            return 'Asia-Pacific'
+
+    return None
+

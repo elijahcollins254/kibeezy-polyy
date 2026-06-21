@@ -25,6 +25,7 @@ class Market(models.Model):
 
     question = models.CharField(max_length=500)
     category = models.CharField(max_length=100, choices=CATEGORY_CHOICES)
+    subcategory = models.CharField(max_length=100, blank=True, null=True, db_index=True)
     description = models.TextField(blank=True, null=True)
     # aws s3
     image_url = models.URLField(max_length=1000, blank=True, null=True)

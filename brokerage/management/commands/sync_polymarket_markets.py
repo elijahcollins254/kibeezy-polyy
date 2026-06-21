@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.models import Market
-from brokerage.utils.category import extract_category
+from brokerage.utils.category import extract_category, extract_subcategory
 
 
 class Command(BaseCommand):
@@ -25,7 +25,14 @@ class Command(BaseCommand):
             remaining = limit - len(all_markets)
             fetch_size = min(batch_size, remaining)
             
-            params = {'limit': fetch_size, 'offset': offset}
+            params = {
+                'limit': fetch_size, 
+                'offset': offset,
+                'active': True,
+                'closed': False,
+                'order': 'volume',
+                'ascending': False,
+            }
             self.stdout.write(f'  Fetching batch: offset={offset}, limit={fetch_size}...')
             
             try:
@@ -48,6 +55,7 @@ class Command(BaseCommand):
                 continue
             
             category = extract_category(m)
+            subcategory = extract_subcategory(m, category)
             
             obj, created = Market.objects.update_or_create(
                 external_id=str(external_id),
@@ -56,6 +64,7 @@ class Command(BaseCommand):
                     'question': m.get('question') or m.get('title') or m.get('name') or '',
                     'description': m.get('description') or '',
                     'category': category,
+                    'subcategory': subcategory,
                     'metadata': m,
                 }
             )

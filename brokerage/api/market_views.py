@@ -8,7 +8,7 @@ import logging
 from brokerage.models import Market
 from brokerage.api.market_serializers import MarketSerializer
 from brokerage.services.polymarket.adapter import PolymarketAdapter
-from brokerage.utils.category import extract_category
+from brokerage.utils.category import extract_category, extract_subcategory
 from django.core.cache import cache
 from brokerage.publish import publish_market_event
 
@@ -33,7 +33,8 @@ class MarketListView(APIView):
                 ).filter(
                     models.Q(title__icontains=q) | 
                     models.Q(question__icontains=q) | 
-                    models.Q(category__icontains=q)
+                    models.Q(category__icontains=q) |
+                    models.Q(subcategory__icontains=q)
                 ).order_by('-created_at')[:100]
                 
                 if qs.exists():
@@ -48,6 +49,8 @@ class MarketListView(APIView):
                         for market in markets:
                             if 'category' not in market or market['category'] == 'Other':
                                 market['category'] = extract_category(market)
+                            if not market.get('subcategory'):
+                                market['subcategory'] = extract_subcategory(market, market.get('category'))
                     response = Response(markets)
             except Exception as e:
                 logger.warning(f"Failed to search markets: {str(e)}")
@@ -71,6 +74,8 @@ class MarketListView(APIView):
                         for market in polymarkets:
                             if 'category' not in market or market['category'] == 'Other':
                                 market['category'] = extract_category(market)
+                            if not market.get('subcategory'):
+                                market['subcategory'] = extract_subcategory(market, market.get('category'))
                     logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets from API")
                     response = Response(polymarkets)
             except Exception as e:

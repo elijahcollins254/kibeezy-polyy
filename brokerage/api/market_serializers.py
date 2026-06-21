@@ -1,13 +1,13 @@
 from rest_framework import serializers
 from brokerage.models import Market
-from brokerage.utils.category import extract_category
+from brokerage.utils.category import extract_category, extract_subcategory
 
 
 class MarketChildSerializer(serializers.ModelSerializer):
     """Serializer for child markets (no nesting to prevent infinite recursion)"""
     class Meta:
         model = Market
-        fields = ('id', 'external_id', 'title', 'question', 'description', 'category', 'source', 'is_approved', 'metadata', 'created_at', 'parent_market')
+        fields = ('id', 'external_id', 'title', 'question', 'description', 'category', 'subcategory', 'source', 'is_approved', 'metadata', 'created_at', 'parent_market')
 
 
 class MarketSerializer(serializers.ModelSerializer):
@@ -23,9 +23,12 @@ class MarketSerializer(serializers.ModelSerializer):
             if instance.metadata:
                 inferred_category = extract_category(instance.metadata)
                 data['category'] = inferred_category
+
+        if not data.get('subcategory') and instance.metadata:
+            data['subcategory'] = extract_subcategory(instance.metadata, data.get('category'))
         
         return data
     
     class Meta:
         model = Market
-        fields = ('id', 'external_id', 'title', 'question', 'description', 'category', 'source', 'is_approved', 'metadata', 'created_at', 'parent_market', 'children')
+        fields = ('id', 'external_id', 'title', 'question', 'description', 'category', 'subcategory', 'source', 'is_approved', 'metadata', 'created_at', 'parent_market', 'children')

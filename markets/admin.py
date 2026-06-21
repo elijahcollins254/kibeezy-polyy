@@ -29,14 +29,14 @@ class MarketAdminForm(forms.ModelForm):
 class MarketAdmin(admin.ModelAdmin):
     form = MarketAdminForm
     
-    list_display = ('question', 'category', 'status', 'market_type', 'yes_probability', 'q_display', 'volume', 'created_at')
-    list_filter = ('status', 'category', 'market_type', 'created_at')
-    search_fields = ('question', 'description')
+    list_display = ('question', 'category', 'subcategory', 'status', 'market_type', 'yes_probability', 'q_display', 'volume', 'created_at')
+    list_filter = ('status', 'category', 'subcategory', 'market_type', 'created_at')
+    search_fields = ('question', 'description', 'subcategory')
     readonly_fields = ('created_at', 'q_yes', 'q_no', 'b', 'q_display')
     
     fieldsets = (
         ('Market Info', {
-            'fields': ('question', 'description', 'category', 'image_url')
+            'fields': ('question', 'description', 'category', 'subcategory', 'image_url')
         }),
         ('Market Configuration', {
             'fields': ('market_type', 'yes_probability', 'options')
