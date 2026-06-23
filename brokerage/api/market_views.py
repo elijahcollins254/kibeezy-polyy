@@ -4,6 +4,7 @@ from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.db import models
 import logging
+import json
 
 from brokerage.models import Market
 from brokerage.api.market_serializers import MarketSerializer
@@ -13,6 +14,52 @@ from django.core.cache import cache
 from brokerage.publish import publish_market_event
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_clob_token_ids(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
+    return []
+
+
+def _get_clob_token_id(market, outcome='Yes', token_id=None):
+    if token_id:
+        return str(token_id)
+
+    if not market or not market.metadata:
+        return None
+
+    token_ids = _parse_clob_token_ids(
+        market.metadata.get('clobTokenIds') or market.metadata.get('clob_token_ids')
+    )
+    if not token_ids:
+        return None
+
+    outcome_index = 0 if str(outcome).lower() in ('yes', 'true', '0') else 1
+    if outcome_index >= len(token_ids):
+        return None
+    return str(token_ids[outcome_index])
+
+
+def _price_history_params(period):
+    period = (period or '1D').upper()
+    mapping = {
+        '1H': {'interval': '1h', 'fidelity': 1},
+        '6H': {'interval': '6h', 'fidelity': 5},
+        '1D': {'interval': '1d', 'fidelity': 15},
+        '1W': {'interval': '1w', 'fidelity': 60},
+        '1M': {'interval': '1m', 'fidelity': 240},
+        'ALL': {'interval': 'max', 'fidelity': 1440},
+    }
+    return mapping.get(period, mapping['1D'])
 
 
 class MarketListView(APIView):
@@ -122,6 +169,43 @@ class MarketDetailView(APIView):
                 logger.error(f"Failed to fetch trade history for {external_id}: {str(e)}", exc_info=True)
                 # Return empty trades list as fallback instead of error
                 response = Response([], status=status.HTTP_200_OK)
+                response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                return response
+
+        # Price history endpoint (CLOB token history; returns chart-ready points)
+        if request.path.endswith('/price-history/'):
+            try:
+                outcome = request.query_params.get('outcome', 'Yes')
+                token_id = _get_clob_token_id(
+                    market,
+                    outcome=outcome,
+                    token_id=request.query_params.get('token_id'),
+                )
+
+                if not token_id:
+                    return Response(
+                        {'error': 'missing_clob_token_id', 'history': []},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                params = _price_history_params(request.query_params.get('period'))
+                price_history = adapter.get_price_history(token_id, params=params)
+                response = Response(
+                    {
+                        'token_id': token_id,
+                        'outcome': outcome,
+                        'period': request.query_params.get('period', '1D'),
+                        **price_history,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+                response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response['Pragma'] = 'no-cache'
+                response['Expires'] = '0'
+                return response
+            except Exception as e:
+                logger.error(f"Failed to fetch price history for {external_id}: {str(e)}", exc_info=True)
+                response = Response({'history': []}, status=status.HTTP_200_OK)
                 response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
                 return response
 

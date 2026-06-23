@@ -95,9 +95,11 @@ class PolymarketAdapter:
     def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         return self.client.data.get_trade_history(market_id, limit=limit)
 
+    def get_price_history(self, token_id: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        return self.client.data.get_price_history(token_id, params=params)
+
     def get_balance(self) -> float:
         """Get account balance in USD."""
         if not self.client.clob:
             raise RuntimeError("CLOB client not available")
         return self.client.clob.get_balance()
-

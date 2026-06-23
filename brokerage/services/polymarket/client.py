@@ -45,6 +45,13 @@ class PolymarketDataClient:
             or getattr(settings, 'POLY_GAMMA_BASE_URL', None)
             or 'https://gamma-api.polymarket.com'
         )
+        self.clob_base_url = (
+            getattr(settings, 'POLY_CLOB_BASE_URL', None)
+            or getattr(settings, 'POLYMARKET_BASE_URL', None)
+            or os.getenv('POLY_CLOB_BASE_URL')
+            or os.getenv('POLYMARKET_CLOB_PROXY_URL')
+            or 'https://clob.polymarket.com'
+        )
         self.session = requests.Session()
 
     def get_markets(self, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
@@ -71,6 +78,15 @@ class PolymarketDataClient:
     def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/markets/{market_id}/trades"
         resp = self.session.get(url, params={'limit': limit}, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_price_history(self, token_id: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        url = f"{self.clob_base_url}/prices-history"
+        query = {'market': token_id}
+        if params:
+            query.update({key: value for key, value in params.items() if value not in (None, '')})
+        resp = self.session.get(url, params=query, timeout=10)
         resp.raise_for_status()
         return resp.json()
     
@@ -286,6 +302,9 @@ class PolymarketClient:
     def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         return self.data.get_trade_history(market_id, limit=limit)
 
+    def get_price_history(self, token_id: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        return self.data.get_price_history(token_id, params=params)
+
     # CLOB endpoints
     def get_orderbook(self, token_id: str) -> Dict[str, Any]:
         if not self.clob:
@@ -313,6 +332,9 @@ class PolymarketClient:
     def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         return self.data.get_trade_history(market_id, limit=limit)
 
+    def get_price_history(self, token_id: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        return self.data.get_price_history(token_id, params=params)
+
     # CLOB endpoints
     def get_orderbook(self, token_id: str) -> Dict[str, Any]:
         return self.clob.get_orderbook(token_id)
@@ -326,4 +348,3 @@ class PolymarketClient:
     def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
         # Positions are served by the Data API (user-level holdings/positions)
         return self.data.get_positions(account_id)
-

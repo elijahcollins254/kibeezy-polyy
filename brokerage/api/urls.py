@@ -9,6 +9,7 @@ urlpatterns = [
     path('markets/', MarketListView.as_view(), name='market-list'),
     path('markets/<str:external_id>/', MarketDetailView.as_view(), name='market-detail'),
     path('markets/<str:external_id>/trades/', MarketDetailView.as_view(), name='market-trades'),
+    path('markets/<str:external_id>/price-history/', MarketDetailView.as_view(), name='market-price-history'),
     path('markets/<str:external_id>/positions/', MarketDetailView.as_view(), name='market-positions'),
     path('markets/search/', MarketListView.as_view(), name='market-search'),
 ]
