@@ -1,6 +1,6 @@
 from django.urls import re_path
-from .consumers import MarketConsumer
+from .websocket.consumers import MarketConsumer
 
 websocket_urlpatterns = [
-    re_path(r'ws/markets/(?P<market_id>[^/]+)/$', MarketConsumer.as_asgi()),
+    re_path(r'ws/market/(?P<market_id>[^/]+)/$', MarketConsumer.as_asgi()),
 ]
