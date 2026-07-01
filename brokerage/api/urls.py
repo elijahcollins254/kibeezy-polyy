@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import PlaceOrderView, PolymarketFillWebhookView, PolymarketResolutionWebhookView
+from .category_views import CategoryListView
 from .market_views import (
     MarketListView,
     MarketDetailView,
@@ -12,6 +13,7 @@ from .market_views import (
 
 urlpatterns = [
     path('orders/place/', PlaceOrderView.as_view(), name='place-order'),
+    path('categories/', CategoryListView.as_view(), name='category-list'),
     path('webhooks/polymarket-fills/', PolymarketFillWebhookView.as_view(), name='polymarket-fill-webhook'),
     path('webhooks/polymarket-resolution/', PolymarketResolutionWebhookView.as_view(), name='polymarket-resolution-webhook'),
     path('markets/', MarketListView.as_view(), name='market-list'),
