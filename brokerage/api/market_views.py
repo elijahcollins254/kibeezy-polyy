@@ -98,6 +98,8 @@ class MarketListView(APIView):
                                 market['category'] = extract_category(market)
                             if not market.get('subcategory'):
                                 market['subcategory'] = extract_subcategory(market, market.get('category'))
+                            market['category_slug'] = market.get('category_slug') or market['category'].lower().replace(' ', '-')
+                            market['subcategory_slug'] = market.get('subcategory_slug') or (market['subcategory'].lower().replace(' ', '-') if market.get('subcategory') else '')
                     response = Response(markets)
             except Exception as e:
                 logger.warning(f"Failed to search markets: {str(e)}")
@@ -123,6 +125,8 @@ class MarketListView(APIView):
                                 market['category'] = extract_category(market)
                             if not market.get('subcategory'):
                                 market['subcategory'] = extract_subcategory(market, market.get('category'))
+                            market['category_slug'] = market.get('category_slug') or market['category'].lower().replace(' ', '-')
+                            market['subcategory_slug'] = market.get('subcategory_slug') or (market['subcategory'].lower().replace(' ', '-') if market.get('subcategory') else '')
                     logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets from API")
                     response = Response(polymarkets)
             except Exception as e:

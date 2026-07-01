@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
-from django.db.models import Sum, Q
+from django.db.models import Sum
+from django.utils.text import slugify
 
 # add ChatMessage model
 # Make it independent of Markets app
@@ -73,6 +74,36 @@ class Wallet(models.Model):
         return acc.balance()
 
 
+class MarketCategory(models.Model):
+    name = models.CharField(max_length=64, unique=True)
+    slug = models.SlugField(max_length=64, unique=True)
+    order = models.IntegerField(default=0, help_text="Use for category sort order")
+
+    class Meta:
+        ordering = ['order', 'name']
+        verbose_name = "Market Category"
+        verbose_name_plural = "Market Categories"
+
+    def __str__(self):
+        return self.name
+
+
+class MarketSubcategory(models.Model):
+    category = models.ForeignKey(MarketCategory, on_delete=models.CASCADE, related_name='subcategories')
+    name = models.CharField(max_length=64)
+    slug = models.SlugField(max_length=64)
+    order = models.IntegerField(default=0, help_text="Use for subcategory sort order")
+
+    class Meta:
+        unique_together = ('category', 'slug')
+        ordering = ['category', 'order', 'name']
+        verbose_name = "Market Subcategory"
+        verbose_name_plural = "Market Subcategories"
+
+    def __str__(self):
+        return f"{self.category.name} / {self.name}"
+
+
 class Market(models.Model):
     SOURCE_CHOICES = [
         ('polymarket', 'Polymarket'),
@@ -111,6 +142,8 @@ class Market(models.Model):
     description = models.TextField(blank=True, null=True)
     category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='Other', db_index=True)
     subcategory = models.CharField(max_length=50, blank=True, null=True, db_index=True)
+    category_obj = models.ForeignKey('MarketCategory', on_delete=models.SET_NULL, null=True, blank=True, related_name='markets')
+    subcategory_obj = models.ForeignKey('MarketSubcategory', on_delete=models.SET_NULL, null=True, blank=True, related_name='markets')
     resolution = models.CharField(max_length=32, null=True, blank=True)
     source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default='local')
     is_approved = models.BooleanField(default=False, help_text="Check to show this market on your frontend")
@@ -159,6 +192,35 @@ class Market(models.Model):
         status = "✓ Approved" if self.is_approved else "⊘ Pending"
         market_label = self.question or self.title
         return f"{status} | {self.source.upper()} | {market_label}"
+
+    def save(self, *args, **kwargs):
+        if self.category_obj:
+            self.category = self.category_obj.name
+        if self.subcategory_obj:
+            self.subcategory = self.subcategory_obj.name
+            if not self.category_obj:
+                self.category = self.subcategory_obj.category.name
+        super().save(*args, **kwargs)
+
+    @property
+    def category_slug(self):
+        if self.category_obj and self.category_obj.slug:
+            return self.category_obj.slug
+        return slugify((self.category or '').strip())
+
+    @property
+    def subcategory_slug(self):
+        if self.subcategory_obj and self.subcategory_obj.slug:
+            return self.subcategory_obj.slug
+        return slugify((self.subcategory or '').strip()) if self.subcategory else ''
+
+    @property
+    def canonical_category(self):
+        return self.category_obj.name if self.category_obj else self.category
+
+    @property
+    def canonical_subcategory(self):
+        return self.subcategory_obj.name if self.subcategory_obj else self.subcategory
 
 
 class Position(models.Model):

@@ -27,15 +27,30 @@ class WalletAdmin(admin.ModelAdmin):
     list_display = ('user', 'currency', 'created_at')
 
 
+@admin.register(models.MarketCategory)
+class MarketCategoryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'slug', 'order')
+    search_fields = ('name',)
+    prepopulated_fields = {'slug': ('name',)}
+
+
+@admin.register(models.MarketSubcategory)
+class MarketSubcategoryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'category', 'slug', 'order')
+    list_filter = ('category',)
+    search_fields = ('name',)
+    prepopulated_fields = {'slug': ('name',)}
+
+
 @admin.register(models.Market)
 class MarketAdmin(admin.ModelAdmin):
-    list_display = ('get_status', 'source', 'category', 'get_question', 'external_id', 'created_at', 'is_approved')
-    list_filter = ('is_approved', 'source', 'category', 'created_at')
-    search_fields = ('question', 'title', 'external_id', 'description')
+    list_display = ('get_status', 'source', 'category', 'subcategory', 'category_obj', 'subcategory_obj', 'get_question', 'external_id', 'created_at', 'is_approved')
+    list_filter = ('is_approved', 'source', 'category', 'category_obj', 'subcategory', 'subcategory_obj', 'created_at')
+    search_fields = ('question', 'title', 'external_id', 'description', 'category', 'subcategory', 'category_obj__name', 'subcategory_obj__name')
     readonly_fields = ('external_id', 'created_at', 'approved_at')
     fieldsets = (
         ('Market Info', {
-            'fields': ('external_id', 'title', 'question', 'description', 'source')
+            'fields': ('external_id', 'title', 'question', 'description', 'source', 'category_obj', 'subcategory_obj', 'category', 'subcategory')
         }),
         ('Approval', {
             'fields': ('is_approved', 'approved_at'),
