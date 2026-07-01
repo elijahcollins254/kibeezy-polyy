@@ -27,7 +27,7 @@ urlpatterns = [
     path('api/csrf-token/', get_csrf_token, name='csrf_token'),
 
     path('api/auth/', include('users.urls')),
-    path('api/markets/', include('markets.urls')),
+    path('api/markets/', include('brokerage.api.urls')),
     path('api/payments/', include('payments.urls')),
     path('api/support/', include('support.urls')),
     path('api/audit/', include('audit.urls')),

@@ -11,7 +11,7 @@ from django.middleware.csrf import get_token
 from .models import CustomUser
 from api.validators import validate_phone_number, validate_password, validate_full_name, normalize_phone_number, ValidationError
 from notifications.views import create_notification
-from markets.utils.price_calculations import PAYOUT_PER_SHARE
+from brokerage.services.price import PAYOUT_PER_SHARE
 from .jwt_auth import generate_jwt_token
 
 logger = logging.getLogger(__name__)
@@ -333,18 +333,17 @@ def leaderboard_view(request):
         ]
 
         # Get top wins from bets
-        from markets.models import Bet, Market
-        top_wins_list = Bet.objects.filter(
-            result='WON',
-            payout__isnull=False
-        ).select_related('user', 'market').order_by('-payout')[:6]
+        from brokerage.models import Position, Market
+        top_wins_list = Position.objects.filter(
+            realized_pnl__gt=0
+        ).select_related('user', 'market').order_by('-realized_pnl')[:6]
 
         top_wins_data = [
             {
                 'id': bet.id,
                 'user_name': f"@{bet.user.username}" if bet.user.username else bet.user.full_name[:20],
                 'market_title': bet.market.question[:50],
-                'profit': int(float(bet.payout or 0) - float(bet.amount)),
+                'profit': int(float(bet.realized_pnl or 0)),
                 'avatar_color': f'bg-{["blue", "green", "purple", "orange", "pink", "cyan"][i % 6]}-500',
             }
             for i, bet in enumerate(top_wins_list)
@@ -711,18 +710,17 @@ def admin_get_user_portfolio(request, user_id):
             return JsonResponse({'error': 'User not found'}, status=404)
         
         # Import here to avoid circular imports
-        from markets.models import Bet, Market
-        from decimal import Decimal
+        from brokerage.models import Market
         
-        # Get all bets for this user and aggregate by market/outcome
-        bets = Bet.objects.filter(user=target_user).select_related('market')
+        # Get all positions for this user and aggregate by market/outcome
+        bets = Position.objects.filter(user=target_user).select_related('market')
         
         portfolio_positions = {}  # {market_id: {outcome: {bought: X, sold: Y, ...}}}
         
         for bet in bets:
             market_id = bet.market_id
-            outcome = bet.outcome
-            action = bet.action  # 'BUY' or 'SELL'
+            outcome = 'Yes'
+            action = 'BUY'
             
             key = f"{market_id}_{outcome}"
             if key not in portfolio_positions:
@@ -742,15 +740,12 @@ def admin_get_user_portfolio(request, user_id):
             
             if action == 'BUY':
                 pos['bought_quantity'] += float(bet.quantity or 0)
-                pos['total_cost'] += float(bet.amount or 0)
-            elif action == 'SELL':
-                pos['sold_quantity'] += float(bet.quantity or 0)
-                pos['total_payout'] += float(bet.payout or 0)
+                pos['total_cost'] += float(bet.average_price * bet.quantity or 0)
             
             # Track wins/losses
-            if bet.result == 'WON':
+            if bet.realized_pnl > 0:
                 pos['num_wins'] += 1
-            elif bet.result == 'LOST':
+            elif bet.realized_pnl < 0:
                 pos['num_losses'] += 1
         
         # Calculate net positions and current values
@@ -764,14 +759,12 @@ def admin_get_user_portfolio(request, user_id):
             if net_quantity > 0:
                 market = Market.objects.get(id=pos['market_id'])
                 
-                # Get current probability
-                if market.market_type == 'BINARY':
-                    if pos['outcome'] == 'Yes':
-                        current_prob = market.yes_probability / 100
-                    else:
-                        current_prob = (100 - market.yes_probability) / 100
-                else:
-                    current_prob = market.yes_probability / 100  # Simplified
+                # Get current probability from the market's metadata if present
+                current_prob = 0.5
+                if getattr(market, 'metadata', None):
+                    current_prob = float(market.metadata.get('yes_probability', 0.5) / 100)
+                if market.question and 'Yes' in market.question:
+                    current_prob = 0.5
                 
                 # Current position value = net_quantity * PAYOUT_PER_SHARE * probability
                 current_value = net_quantity * PAYOUT_PER_SHARE * current_prob
@@ -820,24 +813,24 @@ def admin_get_user_activity(request, user_id):
         except CustomUser.DoesNotExist:
             return JsonResponse({'error': 'User not found'}, status=404)
         
-        from markets.models import Bet
+        from brokerage.models import Position
         from payments.models import Transaction
         
         activity_log = []
         
         # Get all bets
-        bets = Bet.objects.filter(user=target_user).select_related('market').order_by('-timestamp')[:100]
+        bets = Position.objects.filter(user=target_user).select_related('market').order_by('-updated_at')[:100]
         for bet in bets:
             activity_log.append({
                 'type': 'BET',
-                'action': bet.action,  # BUY or SELL
+                'action': 'BUY',
                 'market': bet.market.question[:50],
-                'outcome': bet.outcome,
-                'amount': float(bet.amount),
+                'outcome': 'Yes',
+                'amount': float(bet.average_price * bet.quantity),
                 'quantity': float(bet.quantity or 0),
-                'result': bet.result,
-                'payout': float(bet.payout or 0),
-                'timestamp': bet.timestamp.isoformat() if bet.timestamp else None,
+                'result': 'WON' if bet.realized_pnl > 0 else 'LOST' if bet.realized_pnl < 0 else 'PENDING',
+                'payout': float(bet.realized_pnl or 0),
+                'timestamp': bet.updated_at.isoformat() if bet.updated_at else None,
             })
         
         # Get all transactions

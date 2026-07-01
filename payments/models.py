@@ -25,7 +25,7 @@ class Transaction(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     reference = models.CharField(max_length=50, null=True, blank=True)
     description = models.CharField(max_length=200, null=True, blank=True)
-    related_bet = models.ForeignKey('markets.Bet', on_delete=models.SET_NULL, null=True, blank=True)
+    related_bet = models.ForeignKey('brokerage.Order', on_delete=models.SET_NULL, null=True, blank=True)
     mpesa_response = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

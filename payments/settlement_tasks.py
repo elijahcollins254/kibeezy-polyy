@@ -7,11 +7,12 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from celery import shared_task
-from markets.models import Market, Bet
+from brokerage.models import Market, Position
+from brokerage.models import ChatMessage as BrokerageChatMessage
 from payments.models import Transaction
 from users.models import CustomUser
 from payments.daraja_b2c import call_b2c, normalize_phone
-from markets.lmsr import PAYOUT_PER_SHARE
+from brokerage.services.price import PAYOUT_PER_SHARE
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,8 @@ def settle_market(self, market_id):
                 logger.error(f"Market {market_id} closed but no resolved_outcome set")
                 return {'status': 'error', 'error': 'no_resolved_outcome'}
             
-            # Get all bets
-            all_bets = Bet.objects.filter(market=market)
+            # Get all positions tied to the market and treat them as the settlement source
+            all_bets = Position.objects.filter(market=market)
             
             if all_bets.count() == 0:
                 logger.warning(f"Market {market_id} has no bets, skipping settlement")
@@ -83,7 +84,7 @@ def settle_market(self, market_id):
                 # LMSR payout: shares × 100 KES
                 shares = Decimal(str(bet.quantity))
                 payout_amount = shares * PAYOUT_PER_SHARE
-                profit = payout_amount - Decimal(str(bet.amount))
+                profit = payout_amount - Decimal(str(bet.average_price))
                 
                 # Create transaction record
                 external_ref = f"CACHE-{market.id}-{bet.id}-{timezone.now().timestamp()}"
@@ -97,12 +98,11 @@ def settle_market(self, market_id):
                     external_ref=external_ref,
                     status=Transaction.PENDING,
                     description=f"Payout for market {market.id}: {market.question}",
-                    related_bet=bet
+                    related_bet=None
                 )
                 
                 # Update bet record
-                bet.payout = payout_amount
-                bet.result = 'WON'
+                bet.realized_pnl = payout_amount
                 bet.save()
                 
                 logger.info(
@@ -124,8 +124,7 @@ def settle_market(self, market_id):
             
             # Mark losing bets - explicitly set payout to zero
             for bet in losing_bets:
-                bet.result = 'LOST'
-                bet.payout = Decimal('0')
+                bet.realized_pnl = Decimal('0')
                 bet.save()
                 
                 logger.info(
@@ -248,24 +247,24 @@ def retry_failed_payouts(hours=24):
     return {'status': 'retried', 'count': retry_count}
 
 
-def _create_refund_transaction(bet):
+def _create_refund_transaction(position):
     """
     Create a refund transaction when no winners in a market
     (Internal helper)
     """
-    external_ref = f"CACHE-REFUND-{bet.id}-{timezone.now().timestamp()}"
+    external_ref = f"CACHE-REFUND-{position.id}-{timezone.now().timestamp()}"
     tx = Transaction.objects.create(
-        user=bet.user,
+        user=position.user,
         type='PAYOUT',
-        amount=Decimal(str(bet.amount)),  # Refund full stake
+        amount=Decimal(str(position.average_price)),  # Refund full stake
         phone_number=normalize_phone(bet.user.phone_number),
         reference=external_ref,
         external_ref=external_ref,
         status=Transaction.PENDING,
-        description=f"Refund for market {bet.market.id}: {bet.market.question}",
-        related_bet=bet
+        description=f"Refund for market {position.market.id}: {position.market.question}",
+        related_bet=None
     )
     
     # Enqueue B2C call for refund
     send_b2c_payout.delay(tx.id)
-    logger.info(f"Created refund transaction {tx.id} for bet {bet.id}")
+    logger.info(f"Created refund transaction {tx.id} for position {position.id}")

@@ -3,8 +3,37 @@ from django.conf import settings
 from django.db.models import Sum
 from django.utils.text import slugify
 
-# add ChatMessage model
-# Make it independent of Markets app
+
+class ChatMessage(models.Model):
+    """Market chat/comments stored under the brokerage app so the market chat flow is no longer tied to the old markets app."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='brokerage_chat_messages')
+    market = models.ForeignKey('Market', on_delete=models.CASCADE, related_name='comments')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='replies')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Chat Message'
+        verbose_name_plural = 'Chat Messages'
+        indexes = [
+            models.Index(fields=['market', '-created_at']),
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        if self.parent:
+            return f"{self.user} replied to {self.parent.user} on {self.market_id}: {self.message[:40]}"
+        return f"{self.user} on {self.market_id}: {self.message[:40]}"
+
+    @property
+    def parent_comment(self):
+        return self.parent
+
+    @parent_comment.setter
+    def parent_comment(self, value):
+        self.parent = value
 
 
 class Account(models.Model):

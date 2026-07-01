@@ -9,7 +9,6 @@ from brokerage.services.fee_service import FeeService
 from brokerage.publish import publish_market_event
 from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.models import Order, Market, Fill, Position
-from markets.models import Market as MarketsMarket, Bet
 
 
 class TradingService:
@@ -24,43 +23,35 @@ class TradingService:
         available = Decimal(wallet.available_balance() or 0)
         return available >= required_amount
 
-    def create_bet_from_fill(self, user, market_external_id: str, side: str, fill_data: Dict[str, Any]) -> Bet:
-        """Create a markets.Bet record from a Polymarket fill.
-        
-        This represents the user's position in the market after a fill is executed.
-        """
+    def create_position_from_fill(self, user, market_external_id: str, side: str, fill_data: Dict[str, Any]) -> Position:
+        """Create a brokerage.Position record from a Polymarket fill."""
         f_size = Decimal(str(fill_data.get('size')))
         f_price = Decimal(str(fill_data.get('price')))
         outcome = 'Yes' if side.upper() == 'BUY' else 'No'
         amount = f_size * f_price
         
-        # Get or create markets.Market record (synchronized with Polymarket)
-        markets_market, _ = MarketsMarket.objects.get_or_create(
-            question=market_external_id,
+        market, _ = Market.objects.get_or_create(
+            external_id=market_external_id,
             defaults={
-                'category': 'Crypto',  # default category, can be updated later
+                'title': market_external_id,
+                'question': market_external_id,
+                'category': 'Crypto',
                 'description': f'Polymarket {market_external_id}',
-                'market_type': 'BINARY',
-                'status': 'OPEN',
-                'end_date': '',
+                'source': 'polymarket',
+                'is_approved': True,
             }
         )
-        
-        # Create Bet record
-        bet = Bet.objects.create(
+
+        position, _ = Position.objects.get_or_create(
             user=user,
-            market=markets_market,
-            outcome=outcome,
-            amount=amount,
-            quantity=f_size,
-            action=side.upper(),
-            order_type='MARKET',
-            order_status='FILLED',
-            filled_at=timezone.now(),
-            entry_probability=50,  # Can be updated with actual market probability
+            market=market,
+            defaults={'quantity': f_size, 'average_price': f_price},
         )
-        
-        return bet
+        position.quantity += f_size
+        position.average_price = ((position.average_price * (position.quantity - f_size)) + (f_price * f_size)) / position.quantity if position.quantity else f_price
+        position.save()
+
+        return position
 
     def place_user_order(self, user, market_external_id: str, side: str, size: Decimal, price: Decimal) -> Order:
         # Calculate cost (simple cost = size * price) — adapt for market conventions
@@ -110,20 +101,20 @@ class TradingService:
             # Create brokerage.Fill record (order execution record)
             Fill.objects.create(order=order, external_fill_id=f.get('id'), size=f_size, price=f_price)
             
-            # Create markets.Bet record (user position record)
+            # Create brokerage.Position record (user position record)
             try:
-                bet = self.create_bet_from_fill(user, market_external_id, side, f)
+                position = self.create_position_from_fill(user, market_external_id, side, f)
                 # Store bet ID in metadata for traceability
                 fill_metadata = {
                     'external_fill_id': f.get('id'),
-                    'bet_id': bet.id,
+                    'position_id': position.id,
                     'fill_amount': str(fill_amount),
                 }
             except Exception as e:
                 # Log Bet creation failure but continue with ledger
                 fill_metadata = {
                     'external_fill_id': f.get('id'),
-                    'bet_creation_error': str(e),
+                    'position_creation_error': str(e),
                     'fill_amount': str(fill_amount),
                 }
                 raise
@@ -157,7 +148,7 @@ class TradingService:
                     'external_fill_id': f.get('id'),
                     'size': str(f_size),
                     'price': str(f_price),
-                    'bet_id': fill_metadata.get('bet_id'),
+                    'position_id': fill_metadata.get('position_id'),
                 })
             except Exception:
                 # best-effort, don't fail the flow on publish errors
@@ -166,7 +157,6 @@ class TradingService:
         # If fully filled, mark FILLED and update position
         # Note: We maintain dual position records:
         # - brokerage.Position: Tracks reserved funds and balance impact (internal ledger)
-        # - markets.Bet: Tracks user's market positions and outcomes (trading app)
         if total_filled >= order.size:
             order.status = 'FILLED'
             order.save()

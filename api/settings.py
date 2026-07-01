@@ -50,7 +50,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'users',
-    'markets',
     'payments',
     'notifications',
     'support',

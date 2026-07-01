@@ -64,26 +64,27 @@ class SupportMessage(models.Model):
         return f"Message in {self.ticket.ticket_id} - {self.created_at}"
 
 
-class ChatMessage(models.Model):
-    """Market comments/chat messages for Polymarket-synced markets"""
-    from brokerage.models import Market
-    
-    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='market_comments')
-    market = models.ForeignKey('brokerage.Market', on_delete=models.CASCADE, related_name='comments', null=True, blank=True)
-    message = models.TextField()
-    parent_comment = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
+from brokerage.models import ChatMessage as BrokerageChatMessage
+
+
+class ChatMessage(BrokerageChatMessage):
+    """Compatibility proxy for brokerage chat messages so support chat uses the brokerage app."""
+
     class Meta:
+        proxy = True
+        app_label = 'support'
         ordering = ['-created_at']
         verbose_name = 'Chat Message'
         verbose_name_plural = 'Chat Messages'
-        indexes = [
-            models.Index(fields=['market', '-created_at']),
-            models.Index(fields=['user', '-created_at']),
-        ]
-    
+
+    @property
+    def parent_comment(self):
+        return self.parent
+
+    @parent_comment.setter
+    def parent_comment(self, value):
+        self.parent = value
+
     def __str__(self):
         market_info = f" on {self.market.title}" if self.market else ""
         reply_info = " (reply)" if self.parent_comment else ""

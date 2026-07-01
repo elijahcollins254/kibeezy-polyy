@@ -107,11 +107,11 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     
     def get_user_statistics(self):
         """Get user statistics: total wagered, wins, losses"""
-        from markets.models import Bet
-        bets = Bet.objects.filter(user=self)
-        total_wagered = sum(float(bet.amount) for bet in bets if bet.result != 'PENDING')
-        won_bets = bets.filter(result='WON').count()
-        lost_bets = bets.filter(result='LOST').count()
+        from brokerage.models import Position
+        positions = Position.objects.filter(user=self)
+        total_wagered = sum(float(position.average_price * position.quantity) for position in positions)
+        won_bets = positions.filter(realized_pnl__gt=0).count()
+        lost_bets = positions.filter(realized_pnl__lt=0).count()
         win_rate = (won_bets / (won_bets + lost_bets) * 100) if (won_bets + lost_bets) > 0 else 0
         return {
             'total_wagered': total_wagered,

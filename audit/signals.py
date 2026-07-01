@@ -15,7 +15,7 @@ from django.apps import apps
 from .models import AuditLog, AuditAlert, AuditSummary
 from payments.models import Transaction
 from users.models import CustomUser
-from markets.models import Market, Bet
+from brokerage.models import Market
 
 logger = logging.getLogger(__name__)
 
