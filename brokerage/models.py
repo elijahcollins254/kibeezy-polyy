@@ -2,6 +2,9 @@ from django.db import models
 from django.conf import settings
 from django.db.models import Sum, Q
 
+# add ChatMessage model
+# Make it independent of Markets app
+
 
 class Account(models.Model):
     """Represents a ledger account (e.g., Cash, User Liability, Market Escrow)."""
@@ -75,6 +78,7 @@ class Market(models.Model):
         ('polymarket', 'Polymarket'),
         ('local', 'Local'),
     ]
+    # Increase and match the categories from polymarket
     
     CATEGORY_CHOICES = [
         ('Sports', 'Sports'),

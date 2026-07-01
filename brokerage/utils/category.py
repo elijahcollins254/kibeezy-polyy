@@ -3,6 +3,8 @@ Utility functions for categorizing markets based on their metadata.
 """
 import re
 
+# This is just for initial setup for easy to categorise markets, allow admin to change category. Drop down.
+
 
 def _contains_keyword(text, keyword):
     """
