@@ -3,10 +3,12 @@ from rest_framework.response import Response
 from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.db import models
+from django.contrib.auth import get_user_model
+from decimal import Decimal
 import logging
 import json
 
-from brokerage.models import Market
+from brokerage.models import Market, ChatMessage, Order, Position
 from brokerage.api.market_serializers import MarketSerializer
 from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.utils.category import extract_category, extract_subcategory
@@ -246,3 +248,156 @@ class MarketDetailView(APIView):
         data = MarketSerializer(market).data if local_market else {'external_id': external_id, 'title': external_id}
         data['orderbook'] = orderbook
         return Response(data)
+
+
+class LegacyMarketDetailsView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, market_id):
+        market = None
+        if market_id and str(market_id).isdigit():
+            market = Market.objects.filter(id=market_id).first()
+        if not market:
+            market = Market.objects.filter(external_id=market_id).first()
+        if not market:
+            market = Market.objects.filter(question__icontains=market_id).first()
+
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        comments = ChatMessage.objects.filter(market=market).select_related('user', 'parent').order_by('created_at')
+        data = {
+            'id': market.id,
+            'external_id': market.external_id,
+            'title': market.title,
+            'question': market.question,
+            'description': market.description,
+            'comments': [
+                {
+                    'id': comment.id,
+                    'message': comment.message,
+                    'parent_id': comment.parent_id,
+                    'user_id': comment.user_id,
+                    'user_name': getattr(comment.user, 'full_name', None) or getattr(comment.user, 'username', None) or 'User',
+                    'created_at': comment.created_at.isoformat() if comment.created_at else None,
+                }
+                for comment in comments
+            ],
+            'positions': [],
+            'top_holders': {'yes': [], 'no': []},
+            'activity': [],
+        }
+        return Response(data)
+
+
+class LegacyMarketChatView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, market_id):
+        market = Market.objects.filter(id=market_id).first() or Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        comments = ChatMessage.objects.filter(market=market).select_related('user', 'parent').order_by('created_at')
+        return Response({'comments': [
+            {
+                'id': comment.id,
+                'message': comment.message,
+                'parent_id': comment.parent_id,
+                'user_id': comment.user_id,
+                'user_name': getattr(comment.user, 'full_name', None) or getattr(comment.user, 'username', None) or 'User',
+                'created_at': comment.created_at.isoformat() if comment.created_at else None,
+            }
+            for comment in comments
+        ]})
+
+    def post(self, request, market_id):
+        market = Market.objects.filter(id=market_id).first() or Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        payload = request.data or {}
+        message = (payload.get('message') or '').strip()
+        if not message:
+            return Response({'error': 'message_required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        parent_id = payload.get('reply_to')
+        parent = None
+        if parent_id:
+            parent = ChatMessage.objects.filter(id=parent_id, market=market).first()
+
+        comment = ChatMessage.objects.create(user=request.user, market=market, parent=parent, message=message)
+        return Response({'message': {
+            'id': comment.id,
+            'message': comment.message,
+            'parent_id': comment.parent_id,
+            'user_id': comment.user_id,
+            'user_name': getattr(comment.user, 'full_name', None) or getattr(comment.user, 'username', None) or 'User',
+            'created_at': comment.created_at.isoformat() if comment.created_at else None,
+        }})
+
+
+class LegacyBitcoinMarketView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        market = Market.objects.filter(question__icontains='bitcoin').order_by('-created_at').first()
+        if not market:
+            return Response({
+                'id': 'bitcoin',
+                'external_id': 'bitcoin',
+                'title': 'Bitcoin',
+                'question': 'Will Bitcoin reach $100,000?',
+                'description': 'Bitcoin market',
+                'category': 'Crypto',
+                'source': 'local',
+                'metadata': {},
+            })
+        return Response(MarketSerializer(market).data)
+
+
+class LegacyBitcoinPriceView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        market = Market.objects.filter(question__icontains='bitcoin').order_by('-created_at').first()
+        current_price = 100000
+        if market and market.metadata:
+            current_price = market.metadata.get('current_price', current_price)
+        return Response({'current_price': current_price})
+
+
+class LegacyBetView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        payload = request.data or {}
+        market_id = payload.get('market_id')
+        market = None
+        if market_id and str(market_id).isdigit():
+            market = Market.objects.filter(id=market_id).first()
+        if not market:
+            market = Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        action = (payload.get('action') or 'buy').lower()
+        outcome = payload.get('outcome') or 'Yes'
+        amount = Decimal(str(payload.get('amount') or 1))
+        limit_price = Decimal(str(payload.get('limit_price') or 50))
+
+        side = 'BUY' if action != 'sell' else 'SELL'
+        order = Order.objects.create(
+            user=request.user,
+            market=market,
+            side=side,
+            size=amount,
+            price=limit_price,
+            status='FILLED',
+        )
+        Position.objects.get_or_create(
+            user=request.user,
+            market=market,
+            defaults={'quantity': amount, 'average_price': limit_price},
+        )
+        return Response({'ok': True, 'order_id': order.id, 'outcome': outcome, 'action': action})

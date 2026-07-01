@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('markets', '0002_bet_entry_probability_bet_payout_bet_result_and_more'),
+        ('brokerage', '0001_initial'),
         ('payments', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
@@ -26,7 +26,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='transaction',
             name='related_bet',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='markets.bet'),
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='brokerage.order'),
         ),
         migrations.AddField(
             model_name='transaction',

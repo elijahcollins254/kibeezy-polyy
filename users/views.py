@@ -356,6 +356,126 @@ def leaderboard_view(request):
 
 
 @require_http_methods(["GET"])
+def dashboard_data_view(request):
+    """Return dashboard data for the authenticated user using brokerage-backed positions."""
+    user = request.user if request.user and request.user.is_authenticated else None
+    if not user:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    try:
+        from brokerage.models import Position
+        from payments.models import Transaction
+        from brokerage.services.price import PAYOUT_PER_SHARE
+
+        positions = Position.objects.filter(user=user).select_related('market').order_by('-updated_at')
+        bets = []
+        total_wagered = 0
+        total_returns = 0
+        portfolio_total = 0
+
+        for pos in positions:
+            amount = float((pos.average_price or 0) * (pos.quantity or 0))
+            payout = float(pos.realized_pnl or 0)
+            total_wagered += amount
+            total_returns += payout
+
+            current_prob = 0.5
+            metadata = getattr(pos.market, 'metadata', None) or {}
+            if metadata:
+                raw_prob = metadata.get('yes_probability', 50)
+                try:
+                    current_prob = float(raw_prob) / 100.0
+                except (TypeError, ValueError):
+                    current_prob = 0.5
+
+            current_value = float(pos.quantity or 0) * float(PAYOUT_PER_SHARE) * current_prob
+            portfolio_total += current_value
+
+            bets.append({
+                'id': pos.id,
+                'market_id': pos.market_id,
+                'market_question': (pos.market.question or pos.market.title or '')[:100],
+                'outcome': 'Yes',
+                'amount': str(amount),
+                'entry_probability': 0,
+                'result': 'WON' if pos.realized_pnl > 0 else 'LOST' if pos.realized_pnl < 0 else 'PENDING',
+                'payout': str(payout),
+                'timestamp': pos.updated_at.isoformat() if pos.updated_at else None,
+                'quantity': str(pos.quantity or 0),
+            })
+
+        transactions = Transaction.objects.filter(user=user).order_by('-created_at')[:20]
+        transaction_data = [
+            {
+                'id': txn.id,
+                'type': txn.type,
+                'amount': str(txn.amount),
+                'status': txn.status,
+                'description': txn.description or '',
+                'created_at': txn.created_at.isoformat() if txn.created_at else None,
+                'reference': txn.reference or '',
+            }
+            for txn in transactions
+        ]
+
+        return JsonResponse({
+            'user': {
+                'id': user.id,
+                'phone_number': user.phone_number,
+                'full_name': user.full_name,
+                'username': user.username,
+                'balance': str(user.balance),
+                'kyc_verified': user.kyc_verified,
+                'date_joined': user.date_joined.isoformat() if user.date_joined else None,
+                'is_staff': user.is_staff,
+                'is_superuser': user.is_superuser,
+            },
+            'portfolio': {
+                'total_value': str(round(portfolio_total, 2)),
+            },
+            'bets': bets,
+            'statistics': {
+                'total_wagered': round(total_wagered, 2),
+                'total_returns': round(total_returns, 2),
+                'win_rate': round((sum(1 for bet in bets if bet['result'] == 'WON') / len(bets) * 100) if bets else 0, 2),
+            },
+            'transactions': transaction_data,
+        })
+    except Exception as e:
+        logger.error(f"Dashboard data error: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@require_http_methods(["GET"])
+def history_data_view(request):
+    """Return user transaction history for the authenticated user."""
+    user = request.user if request.user and request.user.is_authenticated else None
+    if not user:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    try:
+        from payments.models import Transaction
+
+        transactions = Transaction.objects.filter(user=user).order_by('-created_at')[:50]
+        data = [
+            {
+                'id': txn.id,
+                'type': txn.type,
+                'amount': str(txn.amount),
+                'status': txn.status,
+                'description': txn.description or '',
+                'created_at': txn.created_at.isoformat() if txn.created_at else None,
+                'reference': txn.reference or '',
+            }
+            for txn in transactions
+        ]
+        return JsonResponse({'transactions': data})
+    except Exception as e:
+        logger.error(f"History data error: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@require_http_methods(["GET"])
 def admin_list_users(request):
     """List all users with their support staff status (admin only)"""
     try:

@@ -1,6 +1,14 @@
 from django.urls import path
 from .views import PlaceOrderView, PolymarketFillWebhookView, PolymarketResolutionWebhookView
-from .market_views import MarketListView, MarketDetailView
+from .market_views import (
+    MarketListView,
+    MarketDetailView,
+    LegacyMarketDetailsView,
+    LegacyMarketChatView,
+    LegacyBitcoinMarketView,
+    LegacyBitcoinPriceView,
+    LegacyBetView,
+)
 
 urlpatterns = [
     path('orders/place/', PlaceOrderView.as_view(), name='place-order'),
@@ -12,4 +20,9 @@ urlpatterns = [
     path('markets/<str:external_id>/price-history/', MarketDetailView.as_view(), name='market-price-history'),
     path('markets/<str:external_id>/positions/', MarketDetailView.as_view(), name='market-positions'),
     path('markets/search/', MarketListView.as_view(), name='market-search'),
+    path('bitcoin/', LegacyBitcoinMarketView.as_view(), name='legacy-bitcoin-market'),
+    path('bitcoin/price/', LegacyBitcoinPriceView.as_view(), name='legacy-bitcoin-price'),
+    path('<int:market_id>/details/', LegacyMarketDetailsView.as_view(), name='legacy-market-details'),
+    path('<int:market_id>/chat/', LegacyMarketChatView.as_view(), name='legacy-market-chat'),
+    path('bet/', LegacyBetView.as_view(), name='legacy-bet'),
 ]
