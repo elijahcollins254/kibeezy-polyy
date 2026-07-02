@@ -4,6 +4,7 @@ from .category_views import CategoryListView
 from .market_views import (
     MarketListView,
     MarketDetailView,
+    MarketLatestPriceView,
     LegacyMarketDetailsView,
     LegacyMarketChatView,
     LegacyBitcoinMarketView,

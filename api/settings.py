@@ -281,7 +281,19 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://cache.co.ke').split(',')
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in config(
+        'CORS_ALLOWED_ORIGINS',
+        default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://cache.co.ke,https://www.cache.co.ke,https://api.cache.co.ke,https://admin.cache.co.ke',
+    ).split(',')
+    if origin.strip()
+]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r'^https://.*\.cache\.co\.ke$',
+    r'^http://localhost(:\d+)?$',
+    r'^http://127\.0\.0\.1(:\d+)?$',
+]
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -298,12 +310,17 @@ CORS_ALLOW_HEADERS = [
     'x-user-email',
 ]
 # CSRF Whitelist: includes frontend + Safaricom Daraja callback servers
-CSRF_TRUSTED_ORIGINS = config(
-    'CSRF_TRUSTED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,'
-            'https://sandbox.safaricom.co.ke,https://api.safaricom.co.ke,'
-            'https://internalsandbox.safaricom.co.ke,https://cache.co.ke'
-).split(',')
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in config(
+        'CSRF_TRUSTED_ORIGINS',
+        default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,'
+                'https://sandbox.safaricom.co.ke,https://api.safaricom.co.ke,'
+                'https://internalsandbox.safaricom.co.ke,https://cache.co.ke,https://www.cache.co.ke,https://api.cache.co.ke,https://admin.cache.co.ke'
+    ).split(',')
+    if origin.strip()
+]
+CORS_PREFLIGHT_MAX_AGE = 600
 
 # ============================================================================
 # SECURITY SETTINGS (HIGH PRIORITY)
