@@ -142,6 +142,76 @@ class MarketListView(APIView):
         return response
 
 
+def _get_latest_price_from_orderbook(orderbook):
+    if not isinstance(orderbook, dict):
+        return None
+
+    for key in ('mid', 'midpoint', 'bestBid', 'best_bid', 'last_trade_price'):
+        value = orderbook.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+
+    bids = orderbook.get('bids') or []
+    if isinstance(bids, list) and bids:
+        first = bids[0]
+        if isinstance(first, dict):
+            value = first.get('price')
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    pass
+
+    return None
+
+
+class MarketLatestPriceView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, external_id):
+        adapter = PolymarketAdapter()
+        market = None
+
+        try:
+            market = Market.objects.get(external_id=external_id)
+        except Market.DoesNotExist:
+            market = None
+
+        cache_key = f"orderbook:{external_id}"
+        orderbook = cache.get(cache_key)
+        if orderbook is None:
+            try:
+                orderbook = adapter.get_orderbook(external_id)
+            except Exception:
+                orderbook = {}
+            try:
+                cache.set(cache_key, orderbook, timeout=5)
+            except Exception:
+                pass
+
+        price = _get_latest_price_from_orderbook(orderbook)
+        if price is None or price <= 0:
+            try:
+                price = float(adapter.get_midpoint(external_id))
+            except Exception:
+                price = None
+
+        if price is None or price <= 0:
+            if market and getattr(market, 'yes_probability', None) is not None:
+                price = float(market.yes_probability) / 100.0
+            else:
+                price = 0.5
+
+        data = MarketSerializer(market).data if market else {'external_id': external_id}
+        data['price'] = price
+        data['yes_probability'] = int(round(price * 100))
+        data['orderbook'] = orderbook
+        return Response(data)
+
+
 class MarketDetailView(APIView):
     permission_classes = [permissions.AllowAny]
 
