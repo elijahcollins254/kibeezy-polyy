@@ -115,6 +115,7 @@ def create_support_ticket(request):
             user = request.user
 
         subject = request.data.get('subject', '').strip()
+        category = request.data.get('category', 'GENERAL').strip().upper()
         message_text = request.data.get('message', '').strip()
         
         if not subject:
@@ -129,10 +130,17 @@ def create_support_ticket(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        if category not in dict(SupportTicket.CATEGORY_CHOICES):
+            return Response(
+                {'error': 'Invalid ticket category'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Create the ticket
         ticket = SupportTicket.objects.create(
             user=user,
-            subject=subject
+            subject=subject,
+            category=category,
         )
         
         # Add initial message

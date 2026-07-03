@@ -20,13 +20,14 @@ class SupportTicketSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source='user.username', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True, allow_null=True)
     assigned_to_username = serializers.CharField(source='assigned_to.username', read_only=True, allow_null=True)
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
     created_at_iso = serializers.SerializerMethodField()
     updated_at_iso = serializers.SerializerMethodField()
     resolved_at_iso = serializers.SerializerMethodField()
 
     class Meta:
         model = SupportTicket
-        fields = ['id', 'ticket_id', 'subject', 'user', 'user_name', 'user_username', 'assigned_to', 
+        fields = ['id', 'ticket_id', 'subject', 'category', 'category_display', 'user', 'user_name', 'user_username', 'assigned_to', 
                   'assigned_to_name', 'assigned_to_username', 'status', 'created_at_iso', 'updated_at_iso', 
                   'resolved_at_iso', 'messages']
 
@@ -51,7 +52,7 @@ class SupportTicketListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SupportTicket
-        fields = ['id', 'ticket_id', 'subject', 'user', 'user_name', 'user_username', 'assigned_to', 
+        fields = ['id', 'ticket_id', 'subject', 'category', 'user', 'user_name', 'user_username', 'assigned_to', 
                   'assigned_to_name', 'assigned_to_username', 'status', 'created_at_iso', 'message_count']
 
     def get_message_count(self, obj):

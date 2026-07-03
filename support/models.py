@@ -15,7 +15,15 @@ class SupportTicket(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='support_tickets')
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, 
                                      related_name='assigned_tickets', limit_choices_to={'is_support_staff': True})
+    CATEGORY_CHOICES = [
+        ('GENERAL', 'General'),
+        ('ACCOUNT', 'Account'),
+        ('PAYMENT', 'Payment'),
+        ('TECHNICAL', 'Technical'),
+        ('FEATURE_REQUEST', 'Feature Request'),
+    ]
     subject = models.CharField(max_length=255)
+    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default='GENERAL')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='OPEN')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
