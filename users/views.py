@@ -12,6 +12,7 @@ from .models import CustomUser
 from api.validators import validate_phone_number, validate_password, validate_full_name, normalize_phone_number, ValidationError
 from notifications.views import create_notification
 from brokerage.services.price import PAYOUT_PER_SHARE
+from brokerage.services.polymarket.adapter import PolymarketAdapter
 from .jwt_auth import generate_jwt_token
 
 logger = logging.getLogger(__name__)
@@ -373,6 +374,8 @@ def dashboard_data_view(request):
         total_returns = 0
         portfolio_total = 0
 
+        adapter = PolymarketAdapter()
+
         for pos in positions:
             amount = float((pos.average_price or 0) * (pos.quantity or 0))
             payout = float(pos.realized_pnl or 0)
@@ -380,8 +383,20 @@ def dashboard_data_view(request):
             total_returns += payout
 
             current_prob = 0.5
-            metadata = getattr(pos.market, 'metadata', None) or {}
-            if metadata:
+
+            # Prefer live midpoint price from the Polymarket CLOB for open-market valuation.
+            # This makes portfolio value reflect the current market price instead of stale metadata.
+            if pos.market and pos.market.external_id:
+                try:
+                    midpoint = adapter.get_midpoint(pos.market.external_id)
+                    if midpoint is not None and midpoint > 0:
+                        current_prob = float(midpoint)
+                except Exception:
+                    pass
+
+            # Fallback to market metadata if the adapter call fails or returns invalid price
+            if current_prob <= 0 or current_prob is None:
+                metadata = getattr(pos.market, 'metadata', None) or {}
                 raw_prob = metadata.get('yes_probability', 50)
                 try:
                     current_prob = float(raw_prob) / 100.0
@@ -398,6 +413,9 @@ def dashboard_data_view(request):
                 'outcome': 'Yes',
                 'amount': str(amount),
                 'entry_probability': 0,
+                'current_yes_probability': round(current_prob * 100, 2),
+                'current_price': round(current_prob, 4),
+                'current_value_kes': round(current_value, 2),
                 'result': 'WON' if pos.realized_pnl > 0 else 'LOST' if pos.realized_pnl < 0 else 'PENDING',
                 'payout': str(payout),
                 'timestamp': pos.updated_at.isoformat() if pos.updated_at else None,
