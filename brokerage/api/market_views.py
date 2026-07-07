@@ -182,6 +182,88 @@ class MarketListView(APIView):
         return response
 
 
+class AllMarketsView(APIView):
+    """Returns ALL markets (approved or not) - for debugging only."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        try:
+            # Return all markets with count breakdown
+            all_count = Market.objects.count()
+            approved_count = Market.objects.filter(is_approved=True).count()
+            polymarket_count = Market.objects.filter(source='polymarket').count()
+            approved_poly_count = Market.objects.filter(is_approved=True, source='polymarket').count()
+            
+            qs = Market.objects.all().order_by('-created_at')[:500]
+            out = MarketSerializer(qs, many=True)
+            
+            response = Response({
+                'debug_info': {
+                    'total_markets': all_count,
+                    'approved_markets': approved_count,
+                    'polymarket_markets': polymarket_count,
+                    'approved_polymarket_markets': approved_poly_count,
+                },
+                'markets': out.data
+            })
+        except Exception as e:
+            logger.error(f"Failed to fetch all markets: {str(e)}", exc_info=True)
+            response = Response({'error': str(e), 'markets': []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        return response
+
+
+class DebugMarketsView(APIView):
+    """Returns diagnostic info about the database connection and market records."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        try:
+            from django.db import connection
+            
+            # Try to get DB info
+            db_config = connection.settings_dict
+            db_name = db_config.get('NAME', 'unknown')
+            db_host = db_config.get('HOST', 'unknown')
+            
+            # Count records in each state
+            stats = {
+                'database': {
+                    'name': db_name,
+                    'host': db_host,
+                    'engine': db_config.get('ENGINE', 'unknown'),
+                },
+                'market_counts': {
+                    'total': Market.objects.count(),
+                    'approved': Market.objects.filter(is_approved=True).count(),
+                    'not_approved': Market.objects.filter(is_approved=False).count(),
+                    'source_polymarket': Market.objects.filter(source='polymarket').count(),
+                    'source_local': Market.objects.filter(source='local').count(),
+                    'approved_and_polymarket': Market.objects.filter(is_approved=True, source='polymarket').count(),
+                },
+                'sample_markets': {
+                    'approved_polymarket': list(
+                        Market.objects.filter(is_approved=True, source='polymarket')
+                        .values('id', 'external_id', 'title', 'is_approved', 'source')[:5]
+                    ),
+                    'not_approved_polymarket': list(
+                        Market.objects.filter(is_approved=False, source='polymarket')
+                        .values('id', 'external_id', 'title', 'is_approved', 'source')[:5]
+                    ),
+                },
+            }
+            response = Response(stats)
+        except Exception as e:
+            logger.error(f"Debug view error: {str(e)}", exc_info=True)
+            response = Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return response
+
+
 def _get_latest_price_from_orderbook(orderbook):
     if not isinstance(orderbook, dict):
         return None

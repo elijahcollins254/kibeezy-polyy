@@ -2,6 +2,8 @@ from django.urls import include, path
 
 from .category_views import CategoryListView
 from .market_views import (
+    AllMarketsView,
+    DebugMarketsView,
     LegacyBetView,
     LegacyMarketChatView,
     LegacyMarketDetailsView,
@@ -19,6 +21,8 @@ urlpatterns = [
     path('webhooks/polymarket-fills/', PolymarketFillWebhookView.as_view(), name='polymarket-fill-webhook'),
     path('webhooks/polymarket-resolution/', PolymarketResolutionWebhookView.as_view(), name='polymarket-resolution-webhook'),
     path('markets/', MarketListView.as_view(), name='market-list'),
+    path('markets/all/', AllMarketsView.as_view(), name='all-markets'),
+    path('markets/debug/', DebugMarketsView.as_view(), name='debug-markets'),
     path('markets/<str:external_id>/latest/', MarketLatestPriceView.as_view(), name='market-latest-price'),
     path('markets/<str:external_id>/', MarketDetailView.as_view(), name='market-detail'),
     path('markets/<str:external_id>/trades/', MarketDetailView.as_view(), name='market-trades'),
