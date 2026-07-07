@@ -11,6 +11,7 @@ import json
 from brokerage.models import Market, ChatMessage, Order, Position
 from brokerage.api.market_serializers import MarketSerializer
 from brokerage.services.polymarket.adapter import PolymarketAdapter
+from brokerage.services.polymarket.sync import fetch_polymarket_market_candidates, sync_polymarket_markets
 from brokerage.utils.category import extract_category, extract_subcategory
 from django.core.cache import cache
 from brokerage.publish import publish_market_event
@@ -318,6 +319,92 @@ class MarketDetailView(APIView):
         data = MarketSerializer(market).data if local_market else {'external_id': external_id, 'title': external_id}
         data['orderbook'] = orderbook
         return Response(data)
+
+
+class PolymarketSyncPreviewView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        category = (request.query_params.get('category') or 'all').strip() or 'all'
+        limit = int(request.query_params.get('limit') or 20)
+        adapter = PolymarketAdapter()
+
+        try:
+            markets = adapter.get_markets(params={
+                'limit': max(limit, 1),
+                'offset': 0,
+                'active': True,
+                'closed': False,
+                'order': 'volume',
+                'ascending': False,
+            }) or []
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        candidates = fetch_polymarket_market_candidates(markets, limit=limit, category=category)
+        enriched = []
+        for market in candidates:
+            external_id = market.get('id') or market.get('market_id') or market.get('token')
+            existing = None
+            if external_id:
+                existing = Market.objects.filter(external_id=str(external_id)).first()
+            enriched.append({
+                'external_id': str(external_id) if external_id else None,
+                'title': market.get('title') or market.get('name') or '',
+                'question': market.get('question') or market.get('title') or market.get('name') or '',
+                'category': extract_category(market),
+                'subcategory': extract_subcategory(market, extract_category(market)),
+                'source': 'polymarket',
+                'already_exists': existing is not None,
+                'is_approved': bool(existing and existing.is_approved) if existing else False,
+            })
+
+        return Response({
+            'category': category,
+            'limit': limit,
+            'count': len(enriched),
+            'markets': enriched,
+        })
+
+
+class PolymarketSyncImportView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        payload = request.data or {}
+        category = (payload.get('category') or 'all').strip() or 'all'
+        limit = int(payload.get('limit') or 20)
+        approve = bool(payload.get('approve', False))
+        selected_external_ids = payload.get('selected_external_ids') or []
+
+        adapter = PolymarketAdapter()
+        try:
+            markets = adapter.get_markets(params={
+                'limit': max(limit, 1),
+                'offset': 0,
+                'active': True,
+                'closed': False,
+                'order': 'volume',
+                'ascending': False,
+            }) or []
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        created_count = sync_polymarket_markets(
+            markets,
+            limit=limit,
+            category=category,
+            approve=approve,
+            selected_external_ids=[str(item) for item in selected_external_ids],
+        )
+
+        return Response({
+            'category': category,
+            'limit': limit,
+            'approve': approve,
+            'created_count': created_count,
+            'selected_count': len(selected_external_ids or []),
+        })
 
 
 class LegacyMarketDetailsView(APIView):

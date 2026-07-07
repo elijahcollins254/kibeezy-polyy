@@ -99,17 +99,21 @@ def poll_and_publish_orderbooks(self, limit: int = 100):
 
 
 @shared_task(bind=True)
-def sync_polymarket_markets_task(self, limit: int = 500):
+def sync_polymarket_markets_task(self, limit: int = 500, only_sports: bool = False):
     """Wrapper task to run the management command that syncs Polymarket markets.
 
     This allows scheduling the sync via Celery Beat.
     Args:
         limit: Max number of markets to fetch (default 500)
+        only_sports: If true, sync only Sports markets
     """
     try:
         from django.core.management import call_command
-        call_command('sync_polymarket_markets', '--limit', str(limit))
-        return {'status': 'ok', 'limit': limit}
+        args = ['--limit', str(limit)]
+        if only_sports:
+            args.append('--only-sports')
+        call_command('sync_polymarket_markets', *args)
+        return {'status': 'ok', 'limit': limit, 'only_sports': only_sports}
     except Exception as e:
         raise e
 

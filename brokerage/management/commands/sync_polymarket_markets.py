@@ -4,17 +4,27 @@ from brokerage.models import Market
 from brokerage.utils.category import extract_category, extract_subcategory
 
 
+def _is_sports_market(market_data):
+    category = market_data.get('category')
+    if category and str(category).strip().lower() == 'sports':
+        return True
+    inferred = extract_category(market_data)
+    return inferred == 'Sports'
+
+
 class Command(BaseCommand):
     help = 'Sync markets from Polymarket into local Market model'
 
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=100, help='Max markets to fetch')
+        parser.add_argument('--only-sports', action='store_true', help='Sync only sports markets from Polymarket')
 
     def handle(self, *args, **options):
         adapter = PolymarketAdapter()
         limit = options.get('limit')
+        only_sports = options.get('only_sports', False)
         
-        self.stdout.write(f'Fetching markets from Polymarket (limit: {limit})...')
+        self.stdout.write(f'Fetching markets from Polymarket (limit: {limit}, only_sports: {only_sports})...')
         
         # Fetch markets with pagination (API batches at 100)
         all_markets = []
@@ -41,13 +51,22 @@ class Command(BaseCommand):
                     self.stdout.write(f'  No more markets available after {len(all_markets)} total')
                     break
                 
-                all_markets.extend(batch)
+                if only_sports:
+                    sports_batch = [market for market in batch if _is_sports_market(market)]
+                    all_markets.extend(sports_batch)
+                    self.stdout.write(f'  Got {len(batch)} markets, {len(sports_batch)} sports markets (total sports: {len(all_markets)})')
+                else:
+                    all_markets.extend(batch)
+                    self.stdout.write(f'  Got {len(batch)} markets (total: {len(all_markets)})')
+
                 offset += fetch_size
-                self.stdout.write(f'  Got {len(batch)} markets (total: {len(all_markets)})')
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f'Error fetching batch at offset {offset}: {e}'))
                 break
         
+        if only_sports:
+            all_markets = all_markets[:limit]
+
         count = 0
         for m in all_markets:
             external_id = m.get('id') or m.get('market_id') or m.get('token')
@@ -65,6 +84,7 @@ class Command(BaseCommand):
                     'description': m.get('description') or '',
                     'category': category,
                     'subcategory': subcategory,
+                    'source': 'polymarket',
                     'metadata': m,
                 }
             )

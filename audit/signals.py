@@ -237,12 +237,13 @@ def log_market_change(sender, instance, created, **kwargs):
     """Log market status changes"""
     
     if created:
+        question_text = instance.question or instance.title or ''
         log_change(
             'markets.Market',
             instance,
             action='CREATE',
-            after_values={'status': instance.status, 'question': instance.question[:100]},
-            description=f"Market created: {instance.question[:50]}"
+            after_values={'status': getattr(instance, 'status', None), 'question': question_text[:100]},
+            description=f"Market created: {question_text[:50]}"
         )
     else:
         # Market updated
@@ -250,12 +251,15 @@ def log_market_change(sender, instance, created, **kwargs):
             old = Market.objects.get(pk=instance.pk)
             changes = {}
             
+            old_status = getattr(old, 'status', None)
+            new_status = getattr(instance, 'status', None)
+
             # Track status changes
-            if old.status != instance.status:
-                changes['status'] = {'old': old.status, 'new': instance.status}
+            if old_status != new_status:
+                changes['status'] = {'old': old_status, 'new': new_status}
                 
                 action = 'UPDATE'
-                if instance.status == 'RESOLVED':
+                if new_status == 'RESOLVED':
                     action = 'MARKET_RESOLVED'
                 
                 log_change(
@@ -264,18 +268,21 @@ def log_market_change(sender, instance, created, **kwargs):
                     action=action,
                     changes=changes,
                     severity='HIGH',
-                    description=f"Market status changed to {instance.status}"
+                    description=f"Market status changed to {new_status}"
                 )
             
+            old_resolved_outcome = getattr(old, 'resolved_outcome', None)
+            new_resolved_outcome = getattr(instance, 'resolved_outcome', None)
+
             # Track outcome resolution
-            if old.resolved_outcome != instance.resolved_outcome and instance.resolved_outcome:
+            if old_resolved_outcome != new_resolved_outcome and new_resolved_outcome:
                 log_change(
                     'markets.Market',
                     instance,
                     action='MARKET_RESOLVED',
-                    changes={'resolved_outcome': {'old': old.resolved_outcome, 'new': instance.resolved_outcome}},
+                    changes={'resolved_outcome': {'old': old_resolved_outcome, 'new': new_resolved_outcome}},
                     severity='CRITICAL',
-                    description=f"Market resolved: {instance.resolved_outcome}"
+                    description=f"Market resolved: {new_resolved_outcome}"
                 )
                 
         except Market.DoesNotExist:
