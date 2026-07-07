@@ -149,7 +149,8 @@ class MarketListView(APIView):
             # By default, fetch approved Polymarket markets from our database (which have categories)
             try:
                 qs = Market.objects.filter(
-                    is_approved=True
+                    is_approved=True,
+                    source='polymarket'
                 ).order_by('-created_at')[:500]
                 
                 if qs.exists():
