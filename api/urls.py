@@ -23,11 +23,11 @@ from api.views import get_csrf_token
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/brokerage/', include('brokerage.api.urls')),
+    path('api/markets/', include('brokerage.api.legacy_urls')),
     path('api/health/', health_check, name='health_check'),
     path('api/csrf-token/', get_csrf_token, name='csrf_token'),
 
     path('api/auth/', include('users.urls')),
-    path('api/markets/', include('brokerage.api.urls')),
     path('api/payments/', include('payments.urls')),
     path('api/support/', include('support.urls')),
     path('api/audit/', include('audit.urls')),

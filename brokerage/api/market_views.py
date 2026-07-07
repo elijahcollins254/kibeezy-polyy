@@ -67,6 +67,43 @@ def _price_history_params(period):
     return mapping.get(period, mapping['1D'])
 
 
+class MarketAvailabilityView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, market_id):
+        return Response({
+            'market_id': market_id,
+            'available_shares': [],
+            'message': 'availability_data_not_available',
+        }, status=status.HTTP_200_OK)
+
+
+class LiquidityCompatibilityView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        path = request.path
+        if path.endswith('/liquidity/positions/'):
+            return Response({'positions': [], 'count': 0}, status=status.HTTP_200_OK)
+        if path.endswith('/liquidity/analytics/'):
+            return Response({'analytics': [], 'lp_provider_id': request.query_params.get('lp_provider_id')}, status=status.HTTP_200_OK)
+        if path.endswith('/liquidity/fee-analytics/'):
+            return Response({'fee_analytics': []}, status=status.HTTP_200_OK)
+        if path.endswith('/liquidity/pool-stats/'):
+            return Response({'pool_stats': {}}, status=status.HTTP_200_OK)
+        if path.endswith('/liquidity/risk-score/'):
+            return Response({'risk_score': 0, 'market_id': request.query_params.get('market_id')}, status=status.HTTP_200_OK)
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        path = request.path
+        if path.endswith('/liquidity/deposit/') or path.endswith('/liquidity/withdraw/') or path.endswith('/add-liquidity/'):
+            return Response({'status': 'ok', 'message': 'request_received'}, status=status.HTTP_200_OK)
+        if path.endswith('/liquidity/claim-fees/'):
+            return Response({'status': 'ok', 'message': 'fees_claimed'}, status=status.HTTP_200_OK)
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
+
 class MarketListView(APIView):
     permission_classes = [permissions.AllowAny]
 
