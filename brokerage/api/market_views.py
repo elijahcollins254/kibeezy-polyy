@@ -67,6 +67,23 @@ def _price_history_params(period):
     return mapping.get(period, mapping['1D'])
 
 
+def _is_active_polymarket_listing(market):
+    if not isinstance(market, dict):
+        return True
+
+    status = str(market.get('status') or market.get('market_status') or '').upper()
+    if status in {'CLOSED', 'RESOLVED', 'INVALID', 'ENDED', 'SETTLED'}:
+        return False
+
+    if market.get('is_resolved') is True or market.get('resolved') is True:
+        return False
+
+    if market.get('is_closed') is True:
+        return False
+
+    return True
+
+
 class MarketAvailabilityView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -117,12 +134,16 @@ class MarketListView(APIView):
             try:
                 # First try searching in our database for approved markets
                 qs = Market.objects.filter(
-                    is_approved=True
+                    is_approved=True,
+                    source__in=['local', 'polymarket']
                 ).filter(
                     models.Q(title__icontains=q) | 
                     models.Q(question__icontains=q) | 
                     models.Q(category__icontains=q) |
                     models.Q(subcategory__icontains=q)
+                ).exclude(
+                    models.Q(source='polymarket', polymarket_status__in=['CLOSED', 'RESOLVED', 'INVALID']) |
+                    models.Q(source='polymarket', resolved_at__isnull=False)
                 ).order_by('-created_at')[:100]
                 
                 if qs.exists():
@@ -134,6 +155,7 @@ class MarketListView(APIView):
                     markets = adapter.get_markets(params=params)
                     # Add category extraction to raw Polymarket markets
                     if isinstance(markets, list):
+                        markets = [market for market in markets if _is_active_polymarket_listing(market)]
                         for market in markets:
                             if 'category' not in market or market['category'] == 'Other':
                                 market['category'] = extract_category(market)
@@ -150,7 +172,10 @@ class MarketListView(APIView):
             try:
                 qs = Market.objects.filter(
                     is_approved=True,
-                    source='polymarket'
+                    source__in=['local', 'polymarket']
+                ).exclude(
+                    models.Q(source='polymarket', polymarket_status__in=['CLOSED', 'RESOLVED', 'INVALID']) |
+                    models.Q(source='polymarket', resolved_at__isnull=False)
                 ).order_by('-created_at')[:500]
                 
                 if qs.exists():
@@ -161,6 +186,7 @@ class MarketListView(APIView):
                     polymarkets = adapter.get_markets(params={'limit': 100})
                     # Add category extraction to raw Polymarket markets
                     if isinstance(polymarkets, list):
+                        polymarkets = [market for market in polymarkets if _is_active_polymarket_listing(market)]
                         for market in polymarkets:
                             if 'category' not in market or market['category'] == 'Other':
                                 market['category'] = extract_category(market)
