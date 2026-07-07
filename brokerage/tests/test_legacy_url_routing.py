@@ -1,0 +1,14 @@
+from django.test import SimpleTestCase
+from django.urls import resolve
+
+from users.views import dashboard_data_view, history_data_view
+
+
+class LegacyMarketUrlRoutingTests(SimpleTestCase):
+    def test_dashboard_alias_routes_to_user_dashboard_view(self):
+        match = resolve('/api/markets/dashboard/')
+        self.assertEqual(match.func, dashboard_data_view)
+
+    def test_history_alias_routes_to_user_history_view(self):
+        match = resolve('/api/markets/history/')
+        self.assertEqual(match.func, history_data_view)

@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from decimal import Decimal
 import logging
 import json
+import uuid
 
 from brokerage.models import Market, ChatMessage, Order, Position
 from brokerage.api.market_serializers import MarketSerializer
@@ -14,6 +15,7 @@ from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.services.polymarket.sync import fetch_polymarket_market_candidates, sync_polymarket_markets
 from brokerage.utils.category import extract_category, extract_subcategory
 from django.core.cache import cache
+from django.utils import timezone
 from brokerage.publish import publish_market_event
 
 logger = logging.getLogger(__name__)
@@ -321,6 +323,167 @@ class MarketDetailView(APIView):
         return Response(data)
 
 
+def _serialize_market_for_admin(market):
+    if not market:
+        return None
+
+    metadata = getattr(market, 'metadata', None) or {}
+    yes_probability = metadata.get('yes_probability')
+    if yes_probability is None:
+        yes_probability = 50
+    try:
+        yes_probability = float(yes_probability)
+    except (TypeError, ValueError):
+        yes_probability = 50.0
+
+    status = getattr(market, 'polymarket_status', None) or ('RESOLVED' if getattr(market, 'resolution_outcome', None) else 'OPEN')
+    return {
+        'id': market.id,
+        'external_id': market.external_id,
+        'question': market.question or market.title,
+        'title': market.title,
+        'category': market.category or 'Other',
+        'description': market.description or '',
+        'status': status,
+        'created_at': market.created_at.isoformat() if market.created_at else None,
+        'end_date': market.resolved_at.isoformat() if market.resolved_at else None,
+        'yes_probability': round(yes_probability * 100, 2),
+        'resolved_outcome': market.resolution_outcome,
+        'resolved_at': market.resolved_at.isoformat() if market.resolved_at else None,
+        'source': market.source,
+        'is_approved': market.is_approved,
+        'total_wagered': '0.00',
+    }
+
+
+class AdminMarketListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        markets = Market.objects.order_by('-created_at')[:200]
+        return Response({'markets': [_serialize_market_for_admin(m) for m in markets], 'count': markets.count()})
+
+
+class AdminMarketCreateView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        payload = request.data or {}
+        question = (payload.get('question') or '').strip()
+        if not question:
+            return Response({'error': 'question_required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        market = Market.objects.create(
+            external_id=payload.get('external_id') or f"local-{uuid.uuid4().hex[:10]}",
+            title=question,
+            question=question,
+            description=(payload.get('description') or '').strip(),
+            category=(payload.get('category') or 'Other').strip() or 'Other',
+            source='local',
+            is_approved=bool(payload.get('is_approved', True)),
+            metadata=payload.get('metadata') or {},
+        )
+        return Response({'market': _serialize_market_for_admin(market)}, status=status.HTTP_201_CREATED)
+
+
+class AdminMarketResolveView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        payload = request.data or {}
+        market_id = payload.get('market_id')
+        outcome = (payload.get('outcome') or '').strip()
+        if not market_id:
+            return Response({'error': 'market_id_required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        market = Market.objects.filter(id=market_id).first() or Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        market.resolution_outcome = outcome or market.resolution_outcome
+        market.resolution = outcome or market.resolution
+        market.polymarket_status = 'RESOLVED'
+        market.resolved_at = market.resolved_at or timezone.now()
+        market.save(update_fields=['resolution_outcome', 'resolution', 'polymarket_status', 'resolved_at'])
+        return Response({'market': _serialize_market_for_admin(market)})
+
+
+class AdminMarketDetailView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def delete(self, request, market_id):
+        market = Market.objects.filter(id=market_id).first() or Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        market.delete()
+        return Response({'deleted': True})
+
+
+class AdminMarketPositionsView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request, market_id):
+        market = Market.objects.filter(id=market_id).first() or Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+
+        positions = Position.objects.filter(market=market).select_related('user').order_by('-quantity')
+        payload = []
+        for position in positions:
+            payload.append({
+                'user_id': position.user_id,
+                'username': getattr(position.user, 'username', '') or getattr(position.user, 'full_name', ''),
+                'email': getattr(position.user, 'email', '') or '',
+                'yes_amount': 0,
+                'no_amount': 0,
+                'total_amount': float(position.quantity or 0),
+                'yes_shares': float(position.quantity or 0),
+                'no_shares': 0,
+                'potential_winnings': float(position.quantity or 0),
+            })
+        return Response({'positions': payload})
+
+
+class AdminMarketActivityView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request, market_id):
+        market = Market.objects.filter(id=market_id).first() or Market.objects.filter(external_id=market_id).first()
+        if not market:
+            return Response({'error': 'market_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'activity': []})
+
+
+class AdminAnalyticsView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        return Response({
+            'metrics': {
+                'active_users_30d': 0,
+                'open_markets': Market.objects.filter(is_approved=True).count(),
+            },
+            'daily_volume': [],
+        })
+
+
+class AdminRiskView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        return Response({'risk_summary': {'total_exposure': 0, 'high_risk_markets': []}})
+
+
+class AdminBulkDeleteView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        ids = request.data.get('market_ids') or []
+        deleted_count = Market.objects.filter(id__in=ids).delete()[0]
+        return Response({'deleted_count': deleted_count})
+
+
 class PolymarketSyncPreviewView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
@@ -405,6 +568,41 @@ class PolymarketSyncImportView(APIView):
             'created_count': created_count,
             'selected_count': len(selected_external_ids or []),
         })
+
+
+class PolymarketSyncRunView(APIView):
+    """Admin endpoint to trigger the background/full Polymarket sync (management command or Celery task)."""
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request):
+        payload = request.data or {}
+        limit = int(payload.get('limit') or 500)
+        only_sports = bool(payload.get('only_sports', False))
+
+        # Try to enqueue Celery task if available
+        try:
+            from brokerage.tasks import sync_polymarket_markets_task
+            try:
+                result = sync_polymarket_markets_task.delay(limit=limit, only_sports=only_sports)
+                return Response({'status': 'queued', 'task_id': getattr(result, 'id', None)}, status=status.HTTP_202_ACCEPTED)
+            except Exception:
+                # Fall back to synchronous call
+                pass
+        except Exception:
+            # Celery not available or import failed; fall back
+            pass
+
+        # Fallback: call the management command synchronously
+        try:
+            from django.core.management import call_command
+            args = ['--limit', str(limit)]
+            if only_sports:
+                args.append('--only-sports')
+            call_command('sync_polymarket_markets', *args)
+            return Response({'status': 'completed', 'limit': limit, 'only_sports': only_sports}, status=status.HTTP_200_OK)
+        except Exception as exc:
+            logger.exception('Failed to run sync_polymarket_markets')
+            return Response({'status': 'error', 'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LegacyMarketDetailsView(APIView):
