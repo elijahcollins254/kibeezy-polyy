@@ -30,6 +30,7 @@ urlpatterns = [
     path('categories/', CategoryListView.as_view(), name='category-list'),
     path('webhooks/polymarket-fills/', PolymarketFillWebhookView.as_view(), name='polymarket-fill-webhook'),
     path('webhooks/polymarket-resolution/', PolymarketResolutionWebhookView.as_view(), name='polymarket-resolution-webhook'),
+    path('', MarketListView.as_view(), name='legacy-market-list'),
     path('markets/', MarketListView.as_view(), name='market-list'),
     path('markets/<str:external_id>/latest/', MarketLatestPriceView.as_view(), name='market-latest-price'),
     path('markets/<str:external_id>/', MarketDetailView.as_view(), name='market-detail'),
