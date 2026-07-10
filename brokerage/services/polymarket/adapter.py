@@ -33,6 +33,9 @@ class PolymarketAdapter:
         token_id: str,
         amount: float,
         side: str,
+        private_key: Optional[str] = None,
+        funder_address: Optional[str] = None,
+        signature_type: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Place a market order on Polymarket.
@@ -45,6 +48,13 @@ class PolymarketAdapter:
         Returns:
             Order response from Polymarket
         """
+        # If a per-request private key is provided, create an ephemeral Clob client
+        if private_key or funder_address or signature_type is not None:
+            # Create temporary PolymarketClobClient using provided auth overrides
+            from .client import PolymarketClobClient
+            tmp = PolymarketClobClient(base_url=self.client.base_url, private_key=private_key, funder_address=funder_address, signature_type=signature_type)
+            return tmp.place_market_order(token_id, amount, side)
+
         if not self.client.clob:
             raise RuntimeError("CLOB client not available")
         return self.client.clob.place_market_order(token_id, amount, side)
@@ -55,6 +65,9 @@ class PolymarketAdapter:
         price: float,
         size: float,
         side: str,
+        private_key: Optional[str] = None,
+        funder_address: Optional[str] = None,
+        signature_type: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Place a limit order on Polymarket.
@@ -68,6 +81,11 @@ class PolymarketAdapter:
         Returns:
             Order response from Polymarket
         """
+        if private_key or funder_address or signature_type is not None:
+            from .client import PolymarketClobClient
+            tmp = PolymarketClobClient(base_url=self.client.base_url, private_key=private_key, funder_address=funder_address, signature_type=signature_type)
+            return tmp.place_limit_order(token_id, price, size, side)
+
         if not self.client.clob:
             raise RuntimeError("CLOB client not available")
         return self.client.clob.place_limit_order(token_id, price, size, side)

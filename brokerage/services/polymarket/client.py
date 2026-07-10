@@ -16,6 +16,11 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
+class PolymarketDepositWalletRequired(Exception):
+    """Raised when Polymarket rejects the maker address and requires deposit wallet flow."""
+    pass
+
 try:
     from py_clob_client_v2 import (
         ClobClient,
@@ -38,7 +43,7 @@ class PolymarketDataClient:
     Defaults to environment `POLY_DATA_BASE_URL` or `POLY_GAMMA_BASE_URL` or falls
     back to `https://data-api.polymarket.com`.
     """
-    def __init__(self, base_url: Optional[str] = None):
+    def __init__(self, base_url: Optional[str] = None, private_key: Optional[str] = None, funder_address: Optional[str] = None, signature_type: Optional[int] = None):
         self.base_url = (
             base_url
             or getattr(settings, 'POLY_DATA_BASE_URL', None)
@@ -119,17 +124,20 @@ class PolymarketClobClient:
             or 'https://clob.polymarket.com'  # Fallback: direct (may fail if geoblocked)
         )
 
-        # Get credentials from settings or environment
+        # Get credentials from provided args, settings or environment
         self.private_key = (
-            getattr(settings, 'POLY_PRIVATE_KEY', None)
+            private_key
+            or getattr(settings, 'POLY_PRIVATE_KEY', None)
             or os.getenv('POLY_PRIVATE_KEY')
         )
         self.funder_address = (
-            getattr(settings, 'POLY_ADDRESS', None)
+            funder_address
+            or getattr(settings, 'POLY_ADDRESS', None)
             or getattr(settings, 'POLYMARKET_ADDRESS', None)
             or os.getenv('POLY_ADDRESS')
         )
-        self.signature_type = getattr(settings, 'POLY_SIGNATURE_TYPE', 0)  # 0=EOA, 1=Email, 2=Proxy
+        # signature_type: 0=EOA, 1=Email, 2=Proxy/Deposit
+        self.signature_type = signature_type if signature_type is not None else getattr(settings, 'POLY_SIGNATURE_TYPE', 0)
 
         self._client = None
         self._init_client()
@@ -207,7 +215,14 @@ class PolymarketClobClient:
             logger.info(f"Market order placed: {side} {amount} {token_id}")
             return response
         except Exception as e:
+            msg = str(e) or ''
             logger.error(f"Failed to place market order: {e}")
+            # Detect common Polymarket rejection when using EOA maker address
+            if 'maker address not allowed' in msg.lower():
+                raise PolymarketDepositWalletRequired(
+                    "Polymarket rejected the maker address ('maker address not allowed'). This account requires the deposit wallet flow.\n"
+                    "Fix: use the Polymarket deposit wallet for trading (set POLY_PRIVATE_KEY to the deposit wallet key or configure per-user deposit wallets)."
+                )
             raise
 
     def place_limit_order(self, token_id: str, price: float, size: float, side: str) -> Dict[str, Any]:
@@ -246,7 +261,13 @@ class PolymarketClobClient:
             logger.info(f"Limit order placed: {side} {size}@{price} {token_id}")
             return response
         except Exception as e:
+            msg = str(e) or ''
             logger.error(f"Failed to place limit order: {e}")
+            if 'maker address not allowed' in msg.lower():
+                raise PolymarketDepositWalletRequired(
+                    "Polymarket rejected the maker address ('maker address not allowed'). This account requires the deposit wallet flow.\n"
+                    "Fix: use the Polymarket deposit wallet for trading (set POLY_PRIVATE_KEY to the deposit wallet key or configure per-user deposit wallets)."
+                )
             raise
 
     def cancel_order(self, order_id: str) -> Dict[str, Any]:

@@ -8,6 +8,7 @@ from brokerage.services.ledger import reserve_user_funds, release_user_funds, cr
 from brokerage.services.fee_service import FeeService
 from brokerage.publish import publish_market_event
 from brokerage.services.polymarket.adapter import PolymarketAdapter
+from brokerage.services.polymarket.client import PolymarketDepositWalletRequired
 from brokerage.models import Order, Market, Fill, Position
 
 
@@ -232,21 +233,61 @@ class TradingService:
             logger.info(f"Created local Order record: {order.id} for user {user.id}")
             
             # Place order on Polymarket
-            if order_type == 'market':
-                # Market order: amount is in USD
-                response = self.adapter.place_market_order(
-                    token_id=token_id,
-                    amount=size,
-                    side=side,
+            try:
+                if order_type == 'market':
+                    # Market order: amount is in USD
+                    response = self.adapter.place_market_order(
+                        token_id=token_id,
+                        amount=size,
+                        side=side,
+                    )
+                else:
+                    # Limit order: size is shares, price is 0-1
+                    response = self.adapter.place_limit_order(
+                        token_id=token_id,
+                        price=price,
+                        size=size,
+                        side=side,
+                    )
+            except PolymarketDepositWalletRequired as ex:
+                # Polymarket requires deposit-wallet flow. Try to retry with user's deposit wallet key if available.
+                logger.warning(f"Polymarket requires deposit wallet for user {user.id}: {ex}")
+                deposit_key = (
+                    getattr(user, 'polymarket_deposit_private_key', None)
+                    or getattr(user, 'deposit_wallet_private_key', None)
+                    or getattr(settings, 'POLY_DEPOSIT_PRIVATE_KEY', None)
                 )
-            else:
-                # Limit order: size is shares, price is 0-1
-                response = self.adapter.place_limit_order(
-                    token_id=token_id,
-                    price=price,
-                    size=size,
-                    side=side,
+                deposit_funder = (
+                    getattr(user, 'polymarket_deposit_address', None)
+                    or getattr(user, 'deposit_wallet_address', None)
+                    or getattr(settings, 'POLY_DEPOSIT_ADDRESS', None)
                 )
+
+                if not deposit_key:
+                    # No deposit key available to retry
+                    logger.error(f"No deposit wallet key available for user {user.id}; cannot retry Polymarket order")
+                    raise
+
+                # Retry using per-request private key and signature_type=2 (deposit/proxy)
+                if order_type == 'market':
+                    response = self.adapter.place_market_order(
+                        token_id=token_id,
+                        amount=size,
+                        side=side,
+                        private_key=deposit_key,
+                        funder_address=deposit_funder,
+                        signature_type=2,
+                    )
+                else:
+                    response = self.adapter.place_limit_order(
+                        token_id=token_id,
+                        price=price,
+                        size=size,
+                        side=side,
+                        private_key=deposit_key,
+                        funder_address=deposit_funder,
+                        signature_type=2,
+                    )
             
             # Extract order ID from response
             polymarket_order_id = response.get('id') or response.get('order_id')
