@@ -153,17 +153,17 @@ class PolymarketClobClient:
         )
         self.private_key = (
             private_key
-            or getattr(settings, 'POLY_PRIVATE_KEY', None)
-            or os.getenv('POLY_PRIVATE_KEY')
-            or getattr(settings, 'POLY_DEPOSIT_PRIVATE_KEY', None)
             or os.getenv('POLY_DEPOSIT_PRIVATE_KEY')
+            or getattr(settings, 'POLY_DEPOSIT_PRIVATE_KEY', None)
+            or os.getenv('POLY_PRIVATE_KEY')
+            or getattr(settings, 'POLY_PRIVATE_KEY', None)
         )
         self.funder_address = (
             funder_address
+            or deposit_wallet_address
+            or os.getenv('POLY_ADDRESS')
             or getattr(settings, 'POLY_ADDRESS', None)
             or getattr(settings, 'POLYMARKET_ADDRESS', None)
-            or os.getenv('POLY_ADDRESS')
-            or deposit_wallet_address
         )
         # signature_type: 0=EOA, 1=Email, 2=Proxy/Deposit
         raw_sig_type = (
@@ -186,6 +186,11 @@ class PolymarketClobClient:
             return
 
         try:
+            logger.info(
+                "Initializing Polymarket CLOB client with signer=%s signature_type=%s",
+                self.funder_address,
+                self.signature_type,
+            )
             self._client = ClobClient(
                 host=self.base_url,
                 key=self.private_key,
