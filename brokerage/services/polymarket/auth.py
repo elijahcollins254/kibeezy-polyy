@@ -14,7 +14,18 @@ import base64
 import hmac
 import hashlib
 import logging
+from pathlib import Path
 from typing import Dict, Optional
+
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
+
+if load_dotenv is not None:
+    env_path = Path(__file__).resolve().parents[2] / '.env'
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 logger = logging.getLogger(__name__)
 

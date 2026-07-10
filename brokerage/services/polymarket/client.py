@@ -13,6 +13,18 @@ from django.conf import settings
 import json
 import logging
 import os
+from pathlib import Path
+
+# Load local .env if present so the service uses the same values as the shell.
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
+
+if load_dotenv is not None:
+    env_path = Path(__file__).resolve().parents[3] / '.env'
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 logger = logging.getLogger(__name__)
 
@@ -124,20 +136,39 @@ class PolymarketClobClient:
             or 'https://clob.polymarket.com'  # Fallback: direct (may fail if geoblocked)
         )
 
-        # Get credentials from provided args, settings or environment
+        # Get credentials from provided args, settings or environment.
+        # Prefer the deposit-wallet address when it is configured so the maker
+        # address matches what Polymarket expects for deposit-wallet trading.
+        deposit_wallet_address = (
+            os.getenv('DEPOSIT_WALLET_ADDRESS')
+            or os.getenv('POLY_DEPOSIT_ADDRESS')
+            or getattr(settings, 'DEPOSIT_WALLET_ADDRESS', None)
+            or getattr(settings, 'POLY_DEPOSIT_ADDRESS', None)
+        )
         self.private_key = (
             private_key
             or getattr(settings, 'POLY_PRIVATE_KEY', None)
             or os.getenv('POLY_PRIVATE_KEY')
+            or getattr(settings, 'POLY_DEPOSIT_PRIVATE_KEY', None)
+            or os.getenv('POLY_DEPOSIT_PRIVATE_KEY')
         )
         self.funder_address = (
             funder_address
             or getattr(settings, 'POLY_ADDRESS', None)
             or getattr(settings, 'POLYMARKET_ADDRESS', None)
             or os.getenv('POLY_ADDRESS')
+            or deposit_wallet_address
         )
         # signature_type: 0=EOA, 1=Email, 2=Proxy/Deposit
-        self.signature_type = signature_type if signature_type is not None else getattr(settings, 'POLY_SIGNATURE_TYPE', 0)
+        raw_sig_type = (
+            signature_type
+            if signature_type is not None
+            else getattr(settings, 'POLY_SIGNATURE_TYPE', None)
+            or os.getenv('POLY_SIGNATURE_TYPE')
+        )
+        if raw_sig_type in (None, ''):
+            raw_sig_type = 2 if deposit_wallet_address else 0
+        self.signature_type = int(raw_sig_type)
 
         self._client = None
         self._init_client()

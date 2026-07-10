@@ -261,6 +261,9 @@ class TradingService:
                     getattr(user, 'polymarket_deposit_address', None)
                     or getattr(user, 'deposit_wallet_address', None)
                     or getattr(settings, 'POLY_DEPOSIT_ADDRESS', None)
+                    or getattr(settings, 'DEPOSIT_WALLET_ADDRESS', None)
+                    or getattr(settings, 'POLY_ADDRESS', None)
+                    or getattr(settings, 'POLYMARKET_ADDRESS', None)
                 )
 
                 if not deposit_key:
