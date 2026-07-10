@@ -121,7 +121,13 @@ class PolymarketClobClient:
     Uses L1 authentication (private key) to derive API credentials and place orders.
     Configured via environment variables or Django settings.
     """
-    def __init__(self, base_url: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        private_key: Optional[str] = None,
+        funder_address: Optional[str] = None,
+        signature_type: Optional[int] = None,
+    ):
         if not HAS_SDK:
             raise RuntimeError("py-clob-client-v2 is required. Install it to use PolymarketClobClient.")
 
