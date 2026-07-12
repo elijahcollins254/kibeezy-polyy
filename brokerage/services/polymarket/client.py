@@ -13,6 +13,10 @@ from django.conf import settings
 import json
 import logging
 import os
+import time
+import base64
+import hmac
+import hashlib
 from pathlib import Path
 
 # Load local .env if present so the service uses the same values as the shell.
@@ -46,7 +50,7 @@ try:
     HAS_SDK = True
 except ImportError:
     HAS_SDK = False
-    logger.error("py-clob-client-v2 not installed. Install it for order placement.")
+    logger.warning("py-clob-client-v2 not installed; using direct REST order submission path.")
 
 
 class PolymarketDataClient:
@@ -177,10 +181,13 @@ class PolymarketClobClient:
         self.signature_type = int(raw_sig_type)
 
         self._client = None
+        self.api_key = None
+        self.api_secret = None
+        self.api_passphrase = None
         self._init_client()
 
     def _init_client(self):
-        """Initialize the ClobClient with authentication."""
+        """Initialize the CLOB client auth state using the documented L2 API-key flow."""
         if not self.private_key:
             logger.warning("POLY_PRIVATE_KEY not set. Order placement will fail.")
             return
@@ -191,16 +198,24 @@ class PolymarketClobClient:
                 self.funder_address,
                 self.signature_type,
             )
-            self._client = ClobClient(
-                host=self.base_url,
-                key=self.private_key,
-                chain_id=137,  # Polygon mainnet
-                signature_type=self.signature_type,
-                funder=self.funder_address,
-            )
-            # Derive and set API credentials for L2 requests
-            creds = self._client.derive_api_key()
-            self._client.set_api_creds(creds)
+            if HAS_SDK:
+                self._client = ClobClient(
+                    host=self.base_url,
+                    key=self.private_key,
+                    chain_id=137,  # Polygon mainnet
+                    signature_type=self.signature_type,
+                    funder=self.funder_address,
+                )
+                creds = self._client.derive_api_key()
+                self._client.set_api_creds(creds)
+                self.api_key = creds.get('apiKey')
+                self.api_secret = creds.get('secret')
+                self.api_passphrase = creds.get('passphrase')
+            else:
+                # Fallback: use the documented L2 header scheme with whatever API creds are in env.
+                self.api_key = os.getenv('POLY_API_KEY') or getattr(settings, 'POLY_API_KEY', None)
+                self.api_secret = os.getenv('POLY_API_SECRET') or getattr(settings, 'POLY_API_SECRET', None)
+                self.api_passphrase = os.getenv('POLY_API_PASSPHRASE') or getattr(settings, 'POLY_API_PASSPHRASE', None)
             logger.info("Polymarket CLOB client initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Polymarket CLOB client: {e}")
@@ -222,84 +237,132 @@ class PolymarketClobClient:
         mid = self._client.get_midpoint(token_id)
         return float(mid.get('mid', 0))
 
-    def place_market_order(self, token_id: str, amount: float, side: str) -> Dict[str, Any]:
-        """
-        Place a market order using py-clob-client-v2.
-        
-        Args:
-            token_id: Token ID to trade
-            amount: Amount in USD to spend (for BUY) or shares to sell (for SELL)
-            side: 'BUY' or 'SELL'
-        
-        Returns:
-            Order response dict
-        """
-        if not self._client:
-            raise RuntimeError("CLOB client not initialized")
+    def _build_l2_headers(self, method: str, path: str, body: str) -> Dict[str, str]:
+        if not self.api_key or not self.api_secret or not self.api_passphrase:
+            raise RuntimeError("Polymarket L2 API credentials are not configured")
+        timestamp = str(int(time.time()))
+        message = f"{method.upper()}|{path}|{timestamp}|{body or ''}"
+        secret = base64.b64decode(self.api_secret) if self.api_secret else b''
+        sig = hmac.new(secret, message.encode('utf-8'), hashlib.sha256).digest()
+        return {
+            'POLY_API_KEY': self.api_key,
+            'POLY_ADDRESS': self.funder_address,
+            'POLY_SIGNATURE': base64.b64encode(sig).decode(),
+            'POLY_TIMESTAMP': timestamp,
+            'POLY_PASSPHRASE': self.api_passphrase,
+            'Content-Type': 'application/json',
+        }
 
+    def _post_order_payload(self, payload: Dict[str, Any], order_type: str) -> Dict[str, Any]:
+        if not self.base_url:
+            raise RuntimeError("CLOB base URL not configured")
+        path = '/order'
+        body = json.dumps(payload)
+        headers = self._build_l2_headers('POST', path, body)
+        url = f"{self.base_url.rstrip('/')}{path}"
+        resp = requests.post(url, data=body, headers=headers, timeout=30)
         try:
-            side_enum = Side.BUY if side.upper() == 'BUY' else Side.SELL
-            
-            # Create market order
-            market_order = MarketOrderArgs(
-                token_id=token_id,
-                amount=amount,
-                side=side_enum,
-                order_type=OrderType.FOK,  # Fill-or-Kill
-            )
-            
-            # Sign the order
-            signed_order = self._client.create_market_order(market_order)
-            
-            # Post the order
-            response = self._client.post_order(signed_order, OrderType.FOK)
-            
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = resp.text
+            raise RuntimeError(f"Polymarket order request failed ({resp.status_code}): {detail}") from exc
+        return resp.json()
+
+    def place_market_order(self, token_id: str, amount: float, side: str) -> Dict[str, Any]:
+        """Place a market order using the documented CLOB /order endpoint."""
+        try:
+            if self._client:
+                order_args = MarketOrderArgs(
+                    token_id=token_id,
+                    amount=amount,
+                    side=side.upper(),
+                    order_type=OrderType.FOK,
+                    builder_code='0x' + '0' * 64,
+                )
+                response = self._client.create_and_post_market_order(
+                    order_args,
+                    order_type=OrderType.FOK,
+                    defer_exec=False,
+                )
+            else:
+                payload = {
+                    'order': {
+                        'maker': self.funder_address,
+                        'signer': self.funder_address,
+                        'tokenId': token_id,
+                        'makerAmount': str(int(amount * 1_000_000)),
+                        'takerAmount': str(int(1_000_000)),
+                        'side': side.upper(),
+                        'expiration': str(int(time.time()) + 86400),
+                        'timestamp': str(int(time.time() * 1000)),
+                        'metadata': '',
+                        'builder': '0x' + '0' * 64,
+                        'signature': '0x',
+                        'salt': int(time.time()),
+                        'signatureType': self.signature_type,
+                    },
+                    'owner': self.api_key or '',
+                    'orderType': 'FOK',
+                    'deferExec': False,
+                    'postOnly': False,
+                }
+                response = self._post_order_payload(payload, 'FOK')
             logger.info(f"Market order placed: {side} {amount} {token_id}")
             return response
         except Exception as e:
             msg = str(e) or ''
             logger.error(f"Failed to place market order: {e}")
-            # Detect common Polymarket rejection when using EOA maker address
             if 'maker address not allowed' in msg.lower():
                 raise PolymarketDepositWalletRequired(
                     "Polymarket rejected the maker address ('maker address not allowed'). This account requires the deposit wallet flow.\n"
-                    "Fix: use the Polymarket deposit wallet for trading (set POLY_PRIVATE_KEY to the deposit wallet key or configure per-user deposit wallets)."
+                    "Fix: use the Polymarket deposit wallet for trading (set POLY_DEPOSIT_PRIVATE_KEY and POLY_DEPOSIT_ADDRESS, or configure per-user deposit wallets)."
                 )
             raise
 
     def place_limit_order(self, token_id: str, price: float, size: float, side: str) -> Dict[str, Any]:
-        """
-        Place a limit order using py-clob-client-v2.
-        
-        Args:
-            token_id: Token ID to trade
-            price: Limit price (0.0-1.0)
-            size: Number of shares
-            side: 'BUY' or 'SELL'
-        
-        Returns:
-            Order response dict
-        """
-        if not self._client:
-            raise RuntimeError("CLOB client not initialized")
-
+        """Place a limit order using the documented CLOB /order endpoint."""
         try:
-            side_enum = Side.BUY if side.upper() == 'BUY' else Side.SELL
-            
-            # Create limit order
-            limit_order = OrderArgs(
-                token_id=token_id,
-                price=price,
-                size=size,
-                side=side_enum,
-            )
-            
-            # Sign the order
-            signed_order = self._client.create_order(limit_order)
-            
-            # Post the order (GTC = Good Till Cancelled)
-            response = self._client.post_order(signed_order, OrderType.GTC)
-            
+            if self._client:
+                order_args = OrderArgs(
+                    token_id=token_id,
+                    price=price,
+                    size=size,
+                    side=side.upper(),
+                    expiration=int(time.time()) + 86400,
+                    builder_code='0x' + '0' * 64,
+                )
+                response = self._client.create_and_post_order(
+                    order_args,
+                    order_type=OrderType.GTC,
+                    post_only=False,
+                    defer_exec=False,
+                )
+            else:
+                # Convert price to fixed-math amount with 6 decimals as documented.
+                maker_amount = str(int(size * 1_000_000))
+                taker_amount = str(int(price * 1_000_000))
+                payload = {
+                    'order': {
+                        'maker': self.funder_address,
+                        'signer': self.funder_address,
+                        'tokenId': token_id,
+                        'makerAmount': maker_amount,
+                        'takerAmount': taker_amount,
+                        'side': side.upper(),
+                        'expiration': str(int(time.time()) + 86400),
+                        'timestamp': str(int(time.time() * 1000)),
+                        'metadata': '',
+                        'builder': '0x' + '0' * 64,
+                        'signature': '0x',
+                        'salt': int(time.time()),
+                        'signatureType': self.signature_type,
+                    },
+                    'owner': self.api_key or '',
+                    'orderType': 'GTC',
+                    'deferExec': False,
+                    'postOnly': False,
+                }
+                response = self._post_order_payload(payload, 'GTC')
             logger.info(f"Limit order placed: {side} {size}@{price} {token_id}")
             return response
         except Exception as e:
@@ -308,7 +371,7 @@ class PolymarketClobClient:
             if 'maker address not allowed' in msg.lower():
                 raise PolymarketDepositWalletRequired(
                     "Polymarket rejected the maker address ('maker address not allowed'). This account requires the deposit wallet flow.\n"
-                    "Fix: use the Polymarket deposit wallet for trading (set POLY_PRIVATE_KEY to the deposit wallet key or configure per-user deposit wallets)."
+                    "Fix: use the Polymarket deposit wallet for trading (set POLY_DEPOSIT_PRIVATE_KEY and POLY_DEPOSIT_ADDRESS, or configure per-user deposit wallets)."
                 )
             raise
 
