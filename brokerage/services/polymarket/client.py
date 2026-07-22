@@ -208,9 +208,9 @@ class PolymarketClobClient:
                 )
                 creds = self._client.derive_api_key()
                 self._client.set_api_creds(creds)
-                self.api_key = creds.get('apiKey')
-                self.api_secret = creds.get('secret')
-                self.api_passphrase = creds.get('passphrase')
+                self.api_key = getattr(creds, 'api_key', None)
+                self.api_secret = getattr(creds, 'api_secret', None)
+                self.api_passphrase = getattr(creds, 'api_passphrase', None)
             else:
                 # Fallback: use the documented L2 header scheme with whatever API creds are in env.
                 self.api_key = os.getenv('POLY_API_KEY') or getattr(settings, 'POLY_API_KEY', None)
