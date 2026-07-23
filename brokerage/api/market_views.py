@@ -127,6 +127,9 @@ class MarketListView(APIView):
     def get(self, request):
         # Support search via query param `q` which will proxy to Polymarket Data/Gamma
         q = request.query_params.get('q')
+        limit = int(request.query_params.get('limit', 500))
+        offset = int(request.query_params.get('offset', 0))
+        limit = min(limit, 1000)  # Cap at 1000 per request
         adapter = PolymarketAdapter()
         
         # If search query provided, fetch from our database first, then fallback to Polymarket API
@@ -144,14 +147,24 @@ class MarketListView(APIView):
                 ).exclude(
                     models.Q(source='polymarket', polymarket_status__in=['CLOSED', 'RESOLVED', 'INVALID']) |
                     models.Q(source='polymarket', resolved_at__isnull=False)
-                ).order_by('-created_at')[:100]
+                ).order_by('-created_at')
+                
+                total = qs.count()
+                qs = qs[offset:offset + limit]
                 
                 if qs.exists():
                     out = MarketSerializer(qs, many=True)
-                    response = Response(out.data)
+                    response = Response({
+                        'results': out.data,
+                        'count': total,
+                        'limit': limit,
+                        'offset': offset,
+                        'next': offset + limit if offset + limit < total else None,
+                        'previous': offset - limit if offset > 0 else None
+                    })
                 else:
                     # Fallback to Polymarket API if not in database
-                    params = {'q': q, 'limit': 100}
+                    params = {'q': q, 'limit': min(1000, limit)}
                     markets = adapter.get_markets(params=params)
                     # Add category extraction to raw Polymarket markets
                     if isinstance(markets, list):
@@ -163,7 +176,14 @@ class MarketListView(APIView):
                                 market['subcategory'] = extract_subcategory(market, market.get('category'))
                             market['category_slug'] = market.get('category_slug') or market['category'].lower().replace(' ', '-')
                             market['subcategory_slug'] = market.get('subcategory_slug') or (market['subcategory'].lower().replace(' ', '-') if market.get('subcategory') else '')
-                    response = Response(markets)
+                    response = Response({
+                        'results': markets,
+                        'count': len(markets) if isinstance(markets, list) else 0,
+                        'limit': limit,
+                        'offset': offset,
+                        'next': None,
+                        'previous': None
+                    })
             except Exception as e:
                 logger.warning(f"Failed to search markets: {str(e)}")
                 response = Response([], status=status.HTTP_200_OK)
@@ -176,14 +196,24 @@ class MarketListView(APIView):
                 ).exclude(
                     models.Q(source='polymarket', polymarket_status__in=['CLOSED', 'RESOLVED', 'INVALID']) |
                     models.Q(source='polymarket', resolved_at__isnull=False)
-                ).order_by('-created_at')[:500]
+                ).order_by('-created_at')
+                
+                total = qs.count()
+                qs = qs[offset:offset + limit]
                 
                 if qs.exists():
                     out = MarketSerializer(qs, many=True)
-                    response = Response(out.data)
+                    response = Response({
+                        'results': out.data,
+                        'count': total,
+                        'limit': limit,
+                        'offset': offset,
+                        'next': offset + limit if offset + limit < total else None,
+                        'previous': offset - limit if offset > 0 else None
+                    })
                 else:
                     # Fallback to Polymarket API if no approved markets in database
-                    polymarkets = adapter.get_markets(params={'limit': 100})
+                    polymarkets = adapter.get_markets(params={'limit': min(1000, limit)})
                     # Add category extraction to raw Polymarket markets
                     if isinstance(polymarkets, list):
                         polymarkets = [market for market in polymarkets if _is_active_polymarket_listing(market)]
@@ -195,7 +225,14 @@ class MarketListView(APIView):
                             market['category_slug'] = market.get('category_slug') or market['category'].lower().replace(' ', '-')
                             market['subcategory_slug'] = market.get('subcategory_slug') or (market['subcategory'].lower().replace(' ', '-') if market.get('subcategory') else '')
                     logger.info(f"Successfully fetched {len(polymarkets) if isinstance(polymarkets, list) else 1} Polymarket markets from API")
-                    response = Response(polymarkets)
+                    response = Response({
+                        'results': polymarkets,
+                        'count': len(polymarkets) if isinstance(polymarkets, list) else 0,
+                        'limit': limit,
+                        'offset': offset,
+                        'next': None,
+                        'previous': None
+                    })
             except Exception as e:
                 logger.error(f"Failed to fetch Polymarket markets: {str(e)}", exc_info=True)
                 response = Response([], status=status.HTTP_200_OK)
@@ -213,13 +250,19 @@ class AllMarketsView(APIView):
 
     def get(self, request):
         try:
+            limit = int(request.query_params.get('limit', 500))
+            offset = int(request.query_params.get('offset', 0))
+            limit = min(limit, 1000)  # Cap at 1000
+            
             # Return all markets with count breakdown
             all_count = Market.objects.count()
             approved_count = Market.objects.filter(is_approved=True).count()
             polymarket_count = Market.objects.filter(source='polymarket').count()
             approved_poly_count = Market.objects.filter(is_approved=True, source='polymarket').count()
             
-            qs = Market.objects.all().order_by('-created_at')[:500]
+            qs = Market.objects.all().order_by('-created_at')
+            total = qs.count()
+            qs = qs[offset:offset + limit]
             out = MarketSerializer(qs, many=True)
             
             response = Response({
@@ -229,7 +272,12 @@ class AllMarketsView(APIView):
                     'polymarket_markets': polymarket_count,
                     'approved_polymarket_markets': approved_poly_count,
                 },
-                'markets': out.data
+                'markets': out.data,
+                'count': total,
+                'limit': limit,
+                'offset': offset,
+                'next': offset + limit if offset + limit < total else None,
+                'previous': offset - limit if offset > 0 else None
             })
         except Exception as e:
             logger.error(f"Failed to fetch all markets: {str(e)}", exc_info=True)
