@@ -17,6 +17,41 @@ from .jwt_auth import generate_jwt_token
 
 logger = logging.getLogger(__name__)
 
+
+def _get_user_by_phone(phone_number: str):
+    if not phone_number:
+        return None
+
+    try:
+        phone_number = normalize_phone_number(phone_number)
+    except Exception:
+        return None
+
+    users = CustomUser.objects.filter(phone_number=phone_number).order_by('-is_active', '-is_superuser', 'id')
+    user = users.first()
+    if users.count() > 1:
+        logger.warning(
+            "Multiple CustomUser records found for phone_number=%s. Using first active match id=%s.",
+            phone_number,
+            user.id if user else None,
+        )
+    return user
+
+
+def _get_user_by_email(email: str):
+    if not email:
+        return None
+
+    user = CustomUser.objects.filter(email=email).order_by('-is_active', '-is_superuser', 'id').first()
+    if user and CustomUser.objects.filter(email=email).count() > 1:
+        logger.warning(
+            "Multiple CustomUser records found for email=%s. Using first active match id=%s.",
+            email,
+            user.id,
+        )
+    return user
+
+
 def generate_unique_username(full_name: str) -> str:
     """Generate a unique username from full_name"""
     # Convert to lowercase and remove special characters
@@ -224,21 +259,13 @@ def update_profile_view(request):
     if not user:
         phone_number = request.headers.get('X-User-Phone-Number')
         if phone_number:
-            try:
-                # Normalize phone number
-                phone_number = normalize_phone_number(phone_number)
-                user = CustomUser.objects.get(phone_number=phone_number)
-            except CustomUser.DoesNotExist:
-                user = None
+            user = _get_user_by_phone(phone_number)
     
     # Fall back to email header auth (for Google OAuth users)
     if not user:
         email = request.headers.get('X-User-Email')
         if email:
-            try:
-                user = CustomUser.objects.get(email=email)
-            except CustomUser.DoesNotExist:
-                user = None
+            user = _get_user_by_email(email)
     
     if not user:
         return JsonResponse({'error': 'Authentication required'}, status=401)
@@ -505,15 +532,9 @@ def admin_list_users(request):
             is_admin = True
         # Check phone header (for API requests from frontend)
         elif request.headers.get('X-User-Phone-Number'):
-            phone_number = request.headers.get('X-User-Phone-Number')
-            try:
-                # Normalize phone number
-                phone_number = normalize_phone_number(phone_number)
-                user_obj = CustomUser.objects.get(phone_number=phone_number)
-                if user_obj.is_staff or user_obj.is_superuser:
-                    is_admin = True
-            except CustomUser.DoesNotExist:
-                pass
+            user_obj = _get_user_by_phone(request.headers.get('X-User-Phone-Number'))
+            if user_obj and (user_obj.is_staff or user_obj.is_superuser):
+                is_admin = True
         
         if not is_admin:
             return JsonResponse({'error': 'Unauthorized'}, status=403)
@@ -545,13 +566,9 @@ def admin_toggle_support_staff(request, user_id):
             is_admin = True
         # Check phone header
         elif request.headers.get('X-User-Phone-Number'):
-            phone_number = request.headers.get('X-User-Phone-Number')
-            try:
-                user_obj = CustomUser.objects.get(phone_number=phone_number)
-                if user_obj.is_staff or user_obj.is_superuser:
-                    is_admin = True
-            except CustomUser.DoesNotExist:
-                pass
+            user_obj = _get_user_by_phone(request.headers.get('X-User-Phone-Number'))
+            if user_obj and (user_obj.is_staff or user_obj.is_superuser):
+                is_admin = True
         
         if not is_admin:
             return JsonResponse({'error': 'Unauthorized'}, status=403)
@@ -826,10 +843,8 @@ def _check_admin_access(request):
         if request.user.is_authenticated and request.user.is_staff:
             return True
         elif request.headers.get('X-User-Phone-Number'):
-            phone_number = request.headers.get('X-User-Phone-Number')
-            phone_number = normalize_phone_number(phone_number)
-            user_obj = CustomUser.objects.get(phone_number=phone_number)
-            return user_obj.is_staff or user_obj.is_superuser
+            user_obj = _get_user_by_phone(request.headers.get('X-User-Phone-Number'))
+            return bool(user_obj and (user_obj.is_staff or user_obj.is_superuser))
     except:
         pass
     return False

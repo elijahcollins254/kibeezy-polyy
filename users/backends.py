@@ -1,6 +1,10 @@
+import logging
+
 from django.contrib.auth.backends import ModelBackend
 from .models import CustomUser
 from api.validators import normalize_phone_number
+
+logger = logging.getLogger(__name__)
 
 
 class PhoneNumberBackend(ModelBackend):
@@ -9,12 +13,20 @@ class PhoneNumberBackend(ModelBackend):
     Allows superusers to login to admin without requiring is_staff flag
     """
     def authenticate(self, request, phone_number=None, password=None, **kwargs):
-        try:
-            # Normalize phone number before lookup
-            if phone_number:
-                phone_number = normalize_phone_number(phone_number)
-            user = CustomUser.objects.get(phone_number=phone_number)
-        except CustomUser.DoesNotExist:
+        if phone_number:
+            phone_number = normalize_phone_number(phone_number)
+
+        users = CustomUser.objects.filter(phone_number=phone_number).order_by('-is_active', '-is_superuser', 'id')
+        user = users.first()
+
+        if users.count() > 1:
+            logger.warning(
+                "Multiple CustomUser records found for phone_number=%s. Using first active match id=%s.",
+                phone_number,
+                user.id if user else None,
+            )
+
+        if not user:
             return None
 
         if user.check_password(password) and self.user_can_authenticate(user):
@@ -41,18 +53,22 @@ class AdminPhoneBackend(ModelBackend):
     Custom backend for Django admin that allows superusers without is_staff
     """
     def authenticate(self, request, username=None, password=None, **kwargs):
-        # Try to get user by phone_number (since we use phone as username)
-        try:
-            # Normalize phone number before lookup
-            if username:
-                username = normalize_phone_number(username)
-            user = CustomUser.objects.get(phone_number=username)
-        except CustomUser.DoesNotExist:
+        if username:
+            username = normalize_phone_number(username)
+
+        users = CustomUser.objects.filter(phone_number=username).order_by('-is_active', '-is_superuser', 'id')
+        user = users.first()
+
+        if users.count() > 1:
+            logger.warning(
+                "Multiple CustomUser records found for admin username=%s. Using first active match id=%s.",
+                username,
+                user.id if user else None,
+            )
+
+        if not user:
             return None
 
-        # Allow if password is correct and user is either:
-        # 1. Staff with is_active=True, OR
-        # 2. Superuser (regardless of is_staff)
         if user.check_password(password):
             if user.is_active and (user.is_staff or user.is_superuser):
                 return user
