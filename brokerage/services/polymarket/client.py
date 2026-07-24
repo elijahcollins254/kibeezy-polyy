@@ -56,21 +56,20 @@ except ImportError:
 class PolymarketDataClient:
     """Client for Data/Gamma APIs (read-only market data).
 
-    Defaults to environment `POLY_DATA_BASE_URL` or `POLY_GAMMA_BASE_URL` or falls
-    back to `https://data-api.polymarket.com`.
+    Follows https://docs.polymarket.com/ for endpoint discovery and patterns.
     """
     def __init__(self, base_url: Optional[str] = None, private_key: Optional[str] = None, funder_address: Optional[str] = None, signature_type: Optional[int] = None):
+        # Official Polymarket data endpoint
         self.base_url = (
             base_url
-            or getattr(settings, 'POLY_DATA_BASE_URL', None)
-            or getattr(settings, 'POLY_GAMMA_BASE_URL', None)
+            or getattr(settings, 'POLYMARKET_DATA_URL', None)
+            or os.getenv('POLYMARKET_DATA_URL')
             or 'https://gamma-api.polymarket.com'
         )
+        # Reference the CLOB URL for cross-API calls (price history, etc.)
         self.clob_base_url = (
-            getattr(settings, 'POLY_CLOB_BASE_URL', None)
-            or getattr(settings, 'POLYMARKET_BASE_URL', None)
-            or os.getenv('POLY_CLOB_BASE_URL')
-            or os.getenv('POLYMARKET_CLOB_PROXY_URL')
+            getattr(settings, 'POLYMARKET_CLOB_URL', None)
+            or os.getenv('POLYMARKET_CLOB_URL')
             or 'https://clob.polymarket.com'
         )
         self.session = requests.Session()
@@ -135,50 +134,35 @@ class PolymarketClobClient:
         if not HAS_SDK:
             raise RuntimeError("py-clob-client-v2 is required. Install it to use PolymarketClobClient.")
 
-        # Use Cloudflare Worker proxy to bypass geoblocking (if configured)
-        # This allows requests from non-US regions to work
+        # Use official Polymarket API URL (or proxy for geoblocking bypass).
+        # This follows https://docs.polymarket.com/
         self.base_url = (
             base_url
-            or getattr(settings, 'POLY_CLOB_BASE_URL', None)
-            or getattr(settings, 'POLYMARKET_BASE_URL', None)
-            or os.getenv('POLY_CLOB_BASE_URL')  # Check environment for proxy URL
-            or os.getenv('POLYMARKET_CLOB_PROXY_URL')  # Alternative: dedicated proxy env var
-            or 'https://clob.polymarket.com'  # Fallback: direct (may fail if geoblocked)
+            or getattr(settings, 'POLYMARKET_CLOB_URL', None)
+            or os.getenv('POLYMARKET_CLOB_URL')
+            or 'https://clob.polymarket.com'
         )
 
-        # Get credentials from provided args, settings or environment.
-        # Prefer the deposit-wallet address when it is configured so the maker
-        # address matches what Polymarket expects for deposit-wallet trading.
-        deposit_wallet_address = (
-            os.getenv('DEPOSIT_WALLET_ADDRESS')
-            or os.getenv('POLY_DEPOSIT_ADDRESS')
-            or getattr(settings, 'DEPOSIT_WALLET_ADDRESS', None)
-            or getattr(settings, 'POLY_DEPOSIT_ADDRESS', None)
-        )
+        # Load credentials from official naming convention (https://docs.polymarket.com/)
+        # POLYMARKET_PRIVATE_KEY: Private key for signing orders
+        # POLYMARKET_WALLET_ADDRESS: Wallet address that funds orders
         self.private_key = (
             private_key
-            or os.getenv('POLY_DEPOSIT_PRIVATE_KEY')
-            or getattr(settings, 'POLY_DEPOSIT_PRIVATE_KEY', None)
-            or os.getenv('POLY_PRIVATE_KEY')
-            or getattr(settings, 'POLY_PRIVATE_KEY', None)
+            or os.getenv('POLYMARKET_PRIVATE_KEY')
+            or getattr(settings, 'POLYMARKET_PRIVATE_KEY', None)
         )
         self.funder_address = (
             funder_address
-            or deposit_wallet_address
-            or os.getenv('POLY_ADDRESS')
-            or getattr(settings, 'POLY_ADDRESS', None)
-            or getattr(settings, 'POLYMARKET_ADDRESS', None)
+            or os.getenv('POLYMARKET_WALLET_ADDRESS')
+            or getattr(settings, 'POLYMARKET_WALLET_ADDRESS', None)
         )
-        # signature_type: 0=EOA, 1=Email, 2=Proxy/Deposit
-        raw_sig_type = (
+        # Signature type: 0=EOA (direct key), 1=Email wallet, 2=Proxy/Deposit
+        # When using official docs pattern, default to 0 (EOA)
+        self.signature_type = (
             signature_type
             if signature_type is not None
-            else getattr(settings, 'POLY_SIGNATURE_TYPE', None)
-            or os.getenv('POLY_SIGNATURE_TYPE')
+            else 0  # Official docs use EOA pattern by default
         )
-        if raw_sig_type in (None, ''):
-            raw_sig_type = 2 if deposit_wallet_address else 0
-        self.signature_type = int(raw_sig_type)
 
         self._client = None
         self.api_key = None

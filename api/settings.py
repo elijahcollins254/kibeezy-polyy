@@ -35,6 +35,12 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost,.vercel.app').split(',')
 
+# Polymarket Official Client Credentials (https://docs.polymarket.com/)
+POLYMARKET_PRIVATE_KEY = config('POLYMARKET_PRIVATE_KEY', default=None)
+POLYMARKET_WALLET_ADDRESS = config('POLYMARKET_WALLET_ADDRESS', default=None)
+POLYMARKET_CLOB_URL = config('POLYMARKET_CLOB_URL', default='https://clob.polymarket.com')
+POLYMARKET_DATA_URL = config('POLYMARKET_DATA_URL', default='https://gamma-api.polymarket.com')
+
 
 
 # Application definition
