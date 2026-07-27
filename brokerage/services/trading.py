@@ -255,15 +255,16 @@ class TradingService:
                 deposit_key = (
                     getattr(user, 'polymarket_deposit_private_key', None)
                     or getattr(user, 'deposit_wallet_private_key', None)
+                    or getattr(settings, 'POLYMARKET_DEPOSIT_PRIVATE_KEY', None)
                     or getattr(settings, 'POLY_DEPOSIT_PRIVATE_KEY', None)
                 )
                 deposit_funder = (
                     getattr(user, 'polymarket_deposit_address', None)
                     or getattr(user, 'deposit_wallet_address', None)
-                    or getattr(settings, 'POLY_DEPOSIT_ADDRESS', None)
+                    or getattr(settings, 'POLYMARKET_DEPOSIT_WALLET_ADDRESS', None)
                     or getattr(settings, 'DEPOSIT_WALLET_ADDRESS', None)
-                    or getattr(settings, 'POLY_ADDRESS', None)
-                    or getattr(settings, 'POLYMARKET_ADDRESS', None)
+                    or getattr(settings, 'POLY_DEPOSIT_ADDRESS', None)
+                    or getattr(settings, 'POLYMARKET_WALLET_ADDRESS', None)
                 )
 
                 if not deposit_key:

@@ -18,15 +18,19 @@ class PolymarketAdapter:
 
     def get_orderbook(self, token_id: str) -> Dict[str, Any]:
         """Get order book for a token."""
-        if not self.client.clob:
-            raise RuntimeError("CLOB client not available")
-        return self.client.clob.get_orderbook(token_id)
+        # Use the public data client (official SDK) for order book reads
+        if not getattr(self.client, 'data', None):
+            raise RuntimeError("Data client not available")
+        with self.client.data._client() as c:
+            return c.get_order_book(token_id)
 
     def get_midpoint(self, token_id: str) -> float:
         """Get midpoint price for a token."""
-        if not self.client.clob:
-            raise RuntimeError("CLOB client not available")
-        return self.client.clob.get_midpoint(token_id)
+        # Midpoint is provided by the public client
+        if not getattr(self.client, 'data', None):
+            raise RuntimeError("Data client not available")
+        with self.client.data._client() as c:
+            return float(c.get_midpoint(token_id))
 
     def place_market_order(
         self,
@@ -52,7 +56,11 @@ class PolymarketAdapter:
         if private_key or funder_address or signature_type is not None:
             # Create temporary PolymarketClobClient using provided auth overrides
             from .client import PolymarketClobClient
-            tmp = PolymarketClobClient(base_url=self.client.base_url, private_key=private_key, funder_address=funder_address, signature_type=signature_type)
+            base_url = None
+            if getattr(self.client, 'clob', None):
+                base_url = getattr(self.client.clob, 'base_url', None)
+            # Map funder_address -> wallet (SDK naming). signature_type is ignored by SDK wrapper.
+            tmp = PolymarketClobClient(base_url=base_url, private_key=private_key, wallet=funder_address)
             return tmp.place_market_order(token_id, amount, side)
 
         if not self.client.clob:
@@ -83,7 +91,10 @@ class PolymarketAdapter:
         """
         if private_key or funder_address or signature_type is not None:
             from .client import PolymarketClobClient
-            tmp = PolymarketClobClient(base_url=self.client.base_url, private_key=private_key, funder_address=funder_address, signature_type=signature_type)
+            base_url = None
+            if getattr(self.client, 'clob', None):
+                base_url = getattr(self.client.clob, 'base_url', None)
+            tmp = PolymarketClobClient(base_url=base_url, private_key=private_key, wallet=funder_address)
             return tmp.place_limit_order(token_id, price, size, side)
 
         if not self.client.clob:
@@ -100,15 +111,16 @@ class PolymarketAdapter:
         return self.place_market_order(market_id, size, side)
 
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
-        if not self.client.clob:
+        if not getattr(self.client, 'clob', None):
             raise RuntimeError("CLOB client not available")
         return self.client.clob.cancel_order(order_id)
 
     def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
         """Get user positions."""
-        if not self.client.clob:
-            raise RuntimeError("CLOB client not available")
-        return self.client.clob.get_positions(account_id)
+        # Use data client for positions
+        if not getattr(self.client, 'data', None):
+            raise RuntimeError("Data client not available")
+        return self.client.data.get_positions(account_id)
 
     def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         return self.client.data.get_trade_history(market_id, limit=limit)
@@ -118,6 +130,7 @@ class PolymarketAdapter:
 
     def get_balance(self) -> float:
         """Get account balance in USD."""
-        if not self.client.clob:
+        # Balance comes from the secure CLOB client
+        if not getattr(self.client, 'clob', None):
             raise RuntimeError("CLOB client not available")
         return self.client.clob.get_balance()
