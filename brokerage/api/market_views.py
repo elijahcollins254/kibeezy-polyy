@@ -206,9 +206,9 @@ class MarketListView(APIView):
                     models.Q(source='polymarket', resolved_at__isnull=False)
                 ).order_by('-created_at')
                 
-                qs = _filter_active_markets(qs)
-                total = len(qs)
+                total = qs.count()
                 qs = qs[offset:offset + limit]
+                qs = _filter_active_markets(qs)
                 
                 if qs:
                     out = MarketSerializer(qs, many=True)
@@ -256,9 +256,9 @@ class MarketListView(APIView):
                     models.Q(source='polymarket', resolved_at__isnull=False)
                 ).order_by('-created_at')
                 
-                qs = _filter_active_markets(qs)
-                total = len(qs)
+                total = qs.count()
                 qs = qs[offset:offset + limit]
+                qs = _filter_active_markets(qs)
                 
                 if qs:
                     out = MarketSerializer(qs, many=True)
