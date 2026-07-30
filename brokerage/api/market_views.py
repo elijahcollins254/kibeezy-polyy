@@ -4,11 +4,13 @@ from rest_framework import permissions, status
 from django.shortcuts import get_object_or_404
 from django.db import models
 from django.contrib.auth import get_user_model
+from datetime import datetime
 from decimal import Decimal
 import logging
 import json
 import uuid
 
+from dateutil.parser import parse
 from brokerage.models import Market, ChatMessage, Order, Position
 from brokerage.api.market_serializers import MarketSerializer
 from brokerage.services.polymarket.adapter import PolymarketAdapter
@@ -67,6 +69,35 @@ def _price_history_params(period):
     return mapping.get(period, mapping['1D'])
 
 
+def _parse_market_datetime(dt_value):
+    if dt_value is None:
+        return None
+
+    if isinstance(dt_value, datetime):
+        dt = dt_value
+    elif isinstance(dt_value, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(int(dt_value), tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+    elif isinstance(dt_value, str):
+        try:
+            dt = parse(dt_value)
+        except (ValueError, TypeError):
+            return None
+    else:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _market_has_expired_at(value):
+    dt = _parse_market_datetime(value)
+    return dt is not None and dt <= timezone.now()
+
+
 def _is_active_polymarket_listing(market):
     if not isinstance(market, dict):
         return True
@@ -81,7 +112,33 @@ def _is_active_polymarket_listing(market):
     if market.get('is_closed') is True:
         return False
 
+    for field in ('end_date', 'endDate', 'close_time', 'closeTime', 'close_at', 'closeAt', 'ends_at', 'endsAt', 'expiry_date', 'expiryDate', 'resolved_at'):
+        if _market_has_expired_at(market.get(field)):
+            return False
+
     return True
+
+
+def _is_active_market_object(market):
+    if not market:
+        return False
+
+    if market.polymarket_status and str(market.polymarket_status).upper() in {'CLOSED', 'RESOLVED', 'INVALID'}:
+        return False
+
+    if getattr(market, 'resolved_at', None) is not None:
+        return False
+
+    metadata = getattr(market, 'metadata', None) or {}
+    for field in ('end_date', 'endDate', 'close_time', 'closeTime', 'close_at', 'closeAt', 'ends_at', 'endsAt', 'expiry_date', 'expiryDate'):
+        if _market_has_expired_at(metadata.get(field)):
+            return False
+
+    return True
+
+
+def _filter_active_markets(queryset):
+    return [market for market in queryset if _is_active_market_object(market)]
 
 
 class MarketAvailabilityView(APIView):
@@ -149,10 +206,11 @@ class MarketListView(APIView):
                     models.Q(source='polymarket', resolved_at__isnull=False)
                 ).order_by('-created_at')
                 
-                total = qs.count()
+                qs = _filter_active_markets(qs)
+                total = len(qs)
                 qs = qs[offset:offset + limit]
                 
-                if qs.exists():
+                if qs:
                     out = MarketSerializer(qs, many=True)
                     response = Response({
                         'results': out.data,
@@ -198,10 +256,11 @@ class MarketListView(APIView):
                     models.Q(source='polymarket', resolved_at__isnull=False)
                 ).order_by('-created_at')
                 
-                total = qs.count()
+                qs = _filter_active_markets(qs)
+                total = len(qs)
                 qs = qs[offset:offset + limit]
                 
-                if qs.exists():
+                if qs:
                     out = MarketSerializer(qs, many=True)
                     response = Response({
                         'results': out.data,

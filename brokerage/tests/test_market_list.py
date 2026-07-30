@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -63,3 +65,28 @@ class MarketListViewTests(TestCase):
         self.assertIn('POLY:ACTIVE', external_ids)
         self.assertNotIn('POLY:RESOLVED', external_ids)
         self.assertNotIn('POLY:CLOSED', external_ids)
+
+    def test_market_list_excludes_expired_polymarket_market_by_end_date(self):
+        Market.objects.create(
+            external_id='POLY:ACTIVE',
+            title='Active Polymarket Market',
+            is_approved=True,
+            source='polymarket',
+            polymarket_status='OPEN'
+        )
+        Market.objects.create(
+            external_id='POLY:EXPIRED',
+            title='Expired Polymarket Market',
+            is_approved=True,
+            source='polymarket',
+            polymarket_status='OPEN',
+            metadata={'end_date': (timezone.now() - timedelta(days=1)).isoformat()}
+        )
+
+        resp = self.client.get('/api/brokerage/markets/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsInstance(resp.data, list)
+        external_ids = [market['external_id'] for market in resp.data]
+        self.assertIn('POLY:ACTIVE', external_ids)
+        self.assertNotIn('POLY:EXPIRED', external_ids)
