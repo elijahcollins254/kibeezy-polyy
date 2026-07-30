@@ -519,6 +519,21 @@ class MarketDetailView(APIView):
                     token_id=request.query_params.get('token_id'),
                 )
 
+                # If token_id is not present in local metadata, try the public
+                # Polymarket API as a fallback to resolve token ids for this market.
+                if not token_id:
+                    try:
+                        remote = adapter.get_market(external_id)
+                        # Polymarket client returns clob_token_ids or clob_token_ids-like fields
+                        remote_tokens = None
+                        if isinstance(remote, dict):
+                            remote_tokens = remote.get('clob_token_ids') or remote.get('clobTokenIds') or remote.get('clob_token_ids')
+                        if isinstance(remote_tokens, list) and len(remote_tokens) > 0:
+                            token_id = str(remote_tokens[0])
+                    except Exception:
+                        # ignore and fall through to error response
+                        token_id = token_id
+
                 if not token_id:
                     return Response(
                         {'error': 'missing_clob_token_id', 'history': []},
