@@ -18,6 +18,8 @@ from users.models import CustomUser
 from notifications.views import create_notification
 from brokerage.services.ledger import (
     record_deposit_and_update_balance,
+    reserve_user_funds,
+    record_withdrawal_reserved_to_cash,
     record_withdrawal_success_and_update_balance,
     record_withdrawal_reversal_and_update_balance,
 )
@@ -194,26 +196,53 @@ def initiate_withdrawal(request):
             status='PENDING',
             description=f'M-Pesa withdrawal of KES {amount}'
         )
+
+        # Reserve the withdrawal amount immediately so pending withdrawals
+        # do not remain available in user.balance while awaiting callback.
+        try:
+            reserve_user_funds(user, amount)
+            user.balance -= amount
+            user.save(update_fields=['balance'])
+        except Exception as e:
+            logger.error(f"Withdrawal reservation failed for user {user.phone_number}: {e}", exc_info=True)
+            transaction.status = 'FAILED'
+            transaction.description = 'Failed to reserve funds for withdrawal'
+            transaction.save()
+            return JsonResponse({'error': 'Failed to reserve withdrawal funds'}, status=500)
         
         # Get M-Pesa client and initiate B2C payment
         client = get_mpesa_client()
         
-        response = client.b2c_payment(
-            user.phone_number,  # User's phone receives the payout
-            amount,
-            description=f'CACHE withdrawal'
-        )
-        
+        try:
+            response = client.b2c_payment(
+                user.phone_number,  # User's phone receives the payout
+                amount,
+                description=f'CACHE withdrawal'
+            )
+        except Exception as e:
+            logger.error(f"B2C withdrawal initiation error for user {user.phone_number}: {e}", exc_info=True)
+            try:
+                record_withdrawal_reversal_and_update_balance(
+                    user,
+                    amount,
+                    reference=f'payments_reversal_init:{transaction.id}',
+                    metadata={'payments_tx': transaction.id, 'reason': 'initiation_error'}
+                )
+            except Exception as reverse_exc:
+                logger.error(f"Failed to release reserved funds after B2C initiation error: {reverse_exc}", exc_info=True)
+
+            transaction.status = 'FAILED'
+            transaction.description = 'Failed to initiate withdrawal'
+            transaction.save()
+            return JsonResponse({'error': 'Failed to initiate withdrawal'}, status=500)
+
         if response.get('ResponseCode') == '0':
             # Update transaction with B2C details
             transaction.merchant_request_id = response.get('ConversationID')
             transaction.checkout_request_id = response.get('OriginatorConversationID')
             transaction.save()
             
-            # DO NOT deduct balance yet - wait for callback to confirm success
-            # Balance will be deducted in b2c_result_callback when result_code == 0
-            
-            # Create notification
+            # Balance was reserved at initiation. Final settlement occurs on callback.
             create_notification(
                 user=user,
                 type_choice='WITHDRAWAL_INITIATED',
@@ -223,7 +252,7 @@ def initiate_withdrawal(request):
                 related_transaction_id=transaction.id
             )
             
-            logger.info(f"Withdrawal initiated for user {user.phone_number}, amount: {amount}, balance NOT yet deducted")
+            logger.info(f"Withdrawal initiated for user {user.phone_number}, amount: {amount}, balance reserved")
             return JsonResponse({
                 'message': 'Withdrawal initiated successfully',
                 'transaction_id': transaction.id,
@@ -232,7 +261,17 @@ def initiate_withdrawal(request):
                 'status': 'PENDING'
             })
         else:
-            # B2C initiation failed
+            # B2C initiation failed: release reserved funds
+            try:
+                record_withdrawal_reversal_and_update_balance(
+                    user,
+                    amount,
+                    reference=f'payments_reversal_init:{transaction.id}',
+                    metadata={'payments_tx': transaction.id, 'reason': 'initiation_failed'}
+                )
+            except Exception as reverse_exc:
+                logger.error(f"Failed to release reserved funds after B2C initiation failure: {reverse_exc}", exc_info=True)
+
             transaction.status = 'FAILED'
             transaction.description = response.get('ResponseDescription', 'B2C payment initiation failed')
             transaction.save()
@@ -384,9 +423,9 @@ def b2c_result_callback(request):
                 # Payment successful
                 logger.info(f"B2C payout success for transaction {tx.id}, recipient {tx.user.phone_number}")
 
-                # Record ledger withdrawal and update user.balance atomically
+                # Finalize reserved withdrawal payout to cash; user.balance was already reduced
                 try:
-                    ledger_tx, updated_balance = record_withdrawal_success_and_update_balance(
+                    ledger_tx, updated_balance = record_withdrawal_reserved_to_cash(
                         tx.user,
                         tx.amount,
                         reference=f"payments:{tx.id}",

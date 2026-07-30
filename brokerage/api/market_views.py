@@ -434,6 +434,9 @@ class MarketLatestPriceView(APIView):
         except Market.DoesNotExist:
             market = None
 
+        if not market and str(external_id).isdigit():
+            market = Market.objects.filter(id=int(external_id)).first()
+
         cache_key = f"orderbook:{external_id}"
         orderbook = cache.get(cache_key)
         if orderbook is None:
@@ -484,6 +487,10 @@ class MarketDetailView(APIView):
         except Market.DoesNotExist:
             market = None
             local_market = False
+
+        if not market and str(external_id).isdigit():
+            market = Market.objects.filter(id=int(external_id)).first()
+            local_market = bool(market)
 
         # Trades endpoint
         if request.path.endswith('/trades/'):

@@ -365,6 +365,43 @@ def record_withdrawal_success_and_update_balance(user, amount: Decimal, referenc
         return ledger_tx, user.balance
 
 
+def record_withdrawal_reserved_to_cash(user, amount: Decimal, reference: str = None, metadata: Dict = None):
+    """Atomically settle a reserved withdrawal payout to cash.
+
+    This finalizes a payout that was reserved at initiation.
+    It moves funds from LIABILITY_RESERVED_{user.id} to CASH without
+    changing the available user balance again.
+    """
+    with db_transaction.atomic():
+        reserved_code = f"LIABILITY_RESERVED_{user.id}"
+        entries = [
+            {
+                'debit': reserved_code,
+                'credit': 'CASH',
+                'amount': amount,
+                'description': f'Withdrawal payout of KES {amount} from reserved funds'
+            },
+        ]
+        ledger_tx = create_transaction_with_entries(
+            user,
+            'WITHDRAWAL',
+            entries,
+            reference=reference or f'withdrawal_reserved:{user.id}',
+            metadata=metadata or {}
+        )
+
+        liability_code = f"LIABILITY_USER_{user.id}"
+        try:
+            liability_account = Account.objects.get(code=liability_code)
+            user.balance = liability_account.balance()
+            user.save(update_fields=['balance'])
+        except Exception as e:
+            logger.warning(f"Failed to sync user.balance after reserved withdrawal payout ledger write: {e}")
+
+    logger.info(f"Ledger reserved withdrawal payout recorded: user={user.id}, amt={amount}, tx={ledger_tx.id}")
+    return ledger_tx, user.balance
+
+
 def record_withdrawal_reversal_and_update_balance(user, amount: Decimal, reference: str = None, metadata: Dict = None):
     """Atomically record withdrawal reversal AND update user.balance.
     
