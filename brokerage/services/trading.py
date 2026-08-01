@@ -10,6 +10,10 @@ from brokerage.publish import publish_market_event
 from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.services.polymarket.client import PolymarketDepositWalletRequired
 from brokerage.models import Order, Market, Fill, Position
+try:
+    from polymarket.errors import RequestRejectedError
+except Exception:
+    RequestRejectedError = None
 
 
 class TradingService:
@@ -249,6 +253,38 @@ class TradingService:
                         size=size,
                         side=side,
                     )
+            except Exception as ex:
+                # If Polymarket specifically rejected the request (e.g. banned relayer),
+                # surface that to the frontend rather than raising a server error.
+                if RequestRejectedError is not None and isinstance(ex, RequestRejectedError):
+                    logger.error(f"Polymarket rejected order: {ex}")
+                    # Release reserved funds and mark order rejected
+                    try:
+                        release_user_funds(user, total_cost)
+                    except Exception:
+                        logger.exception("Failed to release funds after Polymarket rejection")
+                    order.status = 'REJECTED'
+                    order.save()
+                    return {
+                        'success': False,
+                        'executed': False,
+                        'portfolio_updated': False,
+                        'message': str(ex),
+                        'order_id': order.id,
+                        'polymarket_order_id': None,
+                        'type': order_type,
+                        'side': side,
+                        'size': float(size),
+                        'price': float(price),
+                        'status': order.status,
+                        'fee': float(fee),
+                        'total_cost': float(total_cost),
+                        'fills_count': 0,
+                        'fills': [],
+                        'raw_error': repr(ex),
+                    }
+                # Otherwise re-raise and let outer handler manage non-Polymarket errors
+                raise
             except PolymarketDepositWalletRequired as ex:
                 # Polymarket requires deposit-wallet flow. Try to retry with user's deposit wallet key if available.
                 logger.warning(f"Polymarket requires deposit wallet for user {user.id}: {ex}")
