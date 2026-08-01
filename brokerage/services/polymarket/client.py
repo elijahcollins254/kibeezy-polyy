@@ -12,7 +12,12 @@ from typing import Any, Dict, List, Optional
 
 def _get_setting(name: str, default: Optional[str] = None) -> Optional[str]:
     if settings is not None:
-        value = getattr(settings, name, None)
+        try:
+            value = getattr(settings, name, None)
+        except Exception:
+            # Django settings may be present but not configured in test
+            # environments (raises ImproperlyConfigured). Fall back to env.
+            value = None
         if value not in (None, ""):
             return value
     if decouple_config is not None:
@@ -195,16 +200,86 @@ class PolymarketClobClient:
 
     async def _place_market_order(self, token_id: str, amount: float, side: str) -> Dict[str, Any]:
         client = await self._get_client()
-        response = await client.create_market_order(token_id=token_id, side=side.upper(), amount=amount)
-        return {"order_id": getattr(response, "order_id", None), "ok": True, "raw": response}
+        # Use the SDK's place_market_order which posts the signed order and
+        # returns an AcceptedOrder or RejectedOrder (with fields like order_id,
+        # trade_ids, status, etc.). We map that to a simple dict for callers.
+        response = await client.place_market_order(token_id=token_id, side=side.upper(), amount=amount)
+        # AcceptedOrder has attributes like ok, order_id, status, making_amount, taking_amount, trade_ids
+        if getattr(response, "ok", False):
+            # If the order produced immediate trades (trade_ids), fetch
+            # trade details so callers receive fills with size/price.
+            trade_ids = tuple(getattr(response, "trade_ids", ()) or ())
+            fills: List[Dict[str, Any]] = []
+            if trade_ids:
+                # Use the same secure client to fetch account trades by id
+                try:
+                    # list_account_trades returns a paginator; use first_page()
+                    for tid in trade_ids:
+                        paginator = await client.list_account_trades(id=tid)
+                        first = paginator.first_page()
+                        for t in first.items:
+                            fills.append({
+                                "id": getattr(t, "id", None),
+                                "size": float(getattr(t, "size", 0)),
+                                "price": float(getattr(t, "price", 0)),
+                            })
+                except Exception:
+                    # Best-effort: if fetching trade details fails, leave fills empty
+                    fills = []
+
+            return {
+                "order_id": getattr(response, "order_id", None),
+                "ok": True,
+                "status": getattr(response, "status", None),
+                "making_amount": getattr(response, "making_amount", None),
+                "taking_amount": getattr(response, "taking_amount", None),
+                "trade_ids": trade_ids,
+                "transactions_hashes": tuple(getattr(response, "transactions_hashes", ()) or ()),
+                "fills": fills,
+                "raw": response,
+            }
+        else:
+            # RejectedOrder contains error code/message
+            return {"order_id": None, "ok": False, "code": getattr(response, "code", None), "message": getattr(response, "message", None), "raw": response}
 
     def place_limit_order(self, token_id: str, price: float, size: float, side: str) -> Dict[str, Any]:
         return self._run_sync(self._place_limit_order(token_id, price, size, side))
 
     async def _place_limit_order(self, token_id: str, price: float, size: float, side: str) -> Dict[str, Any]:
         client = await self._get_client()
-        response = await client.create_limit_order(token_id=token_id, price=price, size=size, side=side.upper())
-        return {"order_id": getattr(response, "order_id", None), "ok": True, "raw": response}
+        # Use SDK's place_limit_order which posts the signed order and returns
+        # an AcceptedOrder or RejectedOrder similar to market orders.
+        response = await client.place_limit_order(token_id=token_id, price=price, size=size, side=side.upper())
+        if getattr(response, "ok", False):
+            trade_ids = tuple(getattr(response, "trade_ids", ()) or ())
+            fills: List[Dict[str, Any]] = []
+            if trade_ids:
+                try:
+                    for tid in trade_ids:
+                        paginator = await client.list_account_trades(id=tid)
+                        first = paginator.first_page()
+                        for t in first.items:
+                            fills.append({
+                                "id": getattr(t, "id", None),
+                                "size": float(getattr(t, "size", 0)),
+                                "price": float(getattr(t, "price", 0)),
+                            })
+                except Exception:
+                    fills = []
+
+            return {
+                "order_id": getattr(response, "order_id", None),
+                "ok": True,
+                "status": getattr(response, "status", None),
+                "making_amount": getattr(response, "making_amount", None),
+                "taking_amount": getattr(response, "taking_amount", None),
+                "trade_ids": trade_ids,
+                "transactions_hashes": tuple(getattr(response, "transactions_hashes", ()) or ()),
+                "fills": fills,
+                "raw": response,
+            }
+        else:
+            return {"order_id": None, "ok": False, "code": getattr(response, "code", None), "message": getattr(response, "message", None), "raw": response}
 
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
         return self._run_sync(self._cancel_order(order_id))

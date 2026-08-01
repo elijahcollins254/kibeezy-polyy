@@ -62,8 +62,28 @@ class DummySecureClient:
         self.calls.append("setup")
 
     async def create_limit_order(self, **kwargs):
-        self.calls.append(kwargs)
-        return SimpleNamespace(order_id="order-123", ok=True)
+        self.calls.append(("create_limit_order", kwargs))
+        return SimpleNamespace(signature="signed-order")
+
+    async def place_limit_order(self, **kwargs):
+        self.calls.append(("place_limit_order", kwargs))
+        return SimpleNamespace(order_id="order-123", ok=True, trade_ids=("trade-1",), status="accepted")
+
+    async def create_market_order(self, **kwargs):
+        self.calls.append(("create_market_order", kwargs))
+        return SimpleNamespace(signature="signed-order")
+
+    async def place_market_order(self, **kwargs):
+        self.calls.append(("place_market_order", kwargs))
+        return SimpleNamespace(order_id="market-order-123", ok=True, trade_ids=("trade-2",), status="accepted")
+
+    async def list_account_trades(self, **kwargs):
+        # Return a paginator with a single trade matching the requested id
+        tid = kwargs.get('id')
+        if tid is None:
+            return DummyPaginator([])
+        # Provide a mock trade object with id, size and price
+        return DummyPaginator([SimpleNamespace(id=tid, size=2, price=0.52)])
 
 
 @pytest.fixture
