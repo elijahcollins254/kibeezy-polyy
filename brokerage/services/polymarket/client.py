@@ -9,10 +9,30 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+def _get_setting(name: str, default: Optional[str] = None) -> Optional[str]:
+    if settings is not None:
+        value = getattr(settings, name, None)
+        if value not in (None, ""):
+            return value
+    if decouple_config is not None:
+        value = decouple_config(name, default=None)
+        if value not in (None, ""):
+            return value
+    env_value = os.getenv(name)
+    if env_value not in (None, ""):
+        return env_value
+    return default
+
 try:
     from django.conf import settings
 except Exception:  # pragma: no cover - used in lightweight test environments
     settings = None
+
+try:
+    from decouple import config as decouple_config
+except Exception:  # pragma: no cover - optional dependency
+    decouple_config = None
 
 try:
     from dotenv import load_dotenv
@@ -44,9 +64,7 @@ class PolymarketDataClient:
     """Read-only market data client backed by the official public SDK."""
 
     def __init__(self, base_url: Optional[str] = None):
-        self.base_url = base_url or (
-            getattr(settings, "POLYMARKET_DATA_URL", None) if settings is not None else None
-        ) or os.getenv("POLYMARKET_DATA_URL")
+        self.base_url = base_url or _get_setting("POLYMARKET_DATA_URL")
 
     def _client(self) -> PublicClient:
         if PublicClient is None:
@@ -130,13 +148,21 @@ class PolymarketClobClient:
         relayer_api_key: Optional[str] = None,
         relayer_api_key_address: Optional[str] = None,
     ):
-        self.base_url = base_url or (
-            getattr(settings, "POLYMARKET_CLOB_URL", None) if settings is not None else None
-        ) or os.getenv("POLYMARKET_CLOB_URL")
-        self.private_key = private_key or os.getenv("POLYMARKET_DEPOSIT_PRIVATE_KEY") or os.getenv("POLY_DEPOSIT_PRIVATE_KEY")
-        self.wallet = wallet or os.getenv("POLYMARKET_DEPOSIT_WALLET_ADDRESS") or os.getenv("POLY_DEPOSIT_ADDRESS")
-        self.relayer_api_key = relayer_api_key or os.getenv("POLYMARKET_RELAYER_API_KEY")
-        self.relayer_api_key_address = relayer_api_key_address or os.getenv("POLYMARKET_RELAYER_API_KEY_ADDRESS")
+        self.base_url = base_url or _get_setting("POLYMARKET_CLOB_URL", "https://clob.polymarket.com")
+        self.private_key = (
+            private_key
+            or _get_setting("POLYMARKET_DEPOSIT_PRIVATE_KEY")
+            or _get_setting("POLY_DEPOSIT_PRIVATE_KEY")
+            or _get_setting("POLYMARKET_PRIVATE_KEY")
+        )
+        self.wallet = (
+            wallet
+            or _get_setting("POLYMARKET_DEPOSIT_WALLET_ADDRESS")
+            or _get_setting("POLY_DEPOSIT_ADDRESS")
+            or _get_setting("POLYMARKET_WALLET_ADDRESS")
+        )
+        self.relayer_api_key = relayer_api_key or _get_setting("POLYMARKET_RELAYER_API_KEY")
+        self.relayer_api_key_address = relayer_api_key_address or _get_setting("POLYMARKET_RELAYER_API_KEY_ADDRESS")
         self._secure_client = None
 
     async def _get_client(self):

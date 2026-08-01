@@ -14,3 +14,4 @@ PyJWT>=2.8.0
 websockets>=11.0.0
 py_clob_client_v2>=0.1.0
 eth-account>=0.6.0
+polymarket-client>=0.1.0
