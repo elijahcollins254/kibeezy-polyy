@@ -299,6 +299,8 @@ class TradingService:
             
             # Process fills from response (market orders typically fill immediately or partially)
             fills_data = response.get('fills', []) or response.get('result', {}).get('fills', [])
+            executed = False
+            portfolio_updated = False
             
             if fills_data:
                 # Order was filled (market order or immediate fill)
@@ -327,6 +329,8 @@ class TradingService:
                 
                 # Update Position with weighted average (only if there are fills)
                 self._update_position_from_fills(user, market, order)
+                executed = True
+                portfolio_updated = True
             else:
                 # No fills in response - order is pending (limit orders typically)
                 order.status = 'OPEN'
@@ -336,7 +340,10 @@ class TradingService:
             
             # Return success response with local order data
             return {
-                'success': True,
+                'success': executed,
+                'executed': executed,
+                'portfolio_updated': portfolio_updated,
+                'message': 'Trade executed successfully and added to your portfolio.' if executed else 'Trade was not successful in Polymarket. Your order was not filled.',
                 'order_id': order.id,  # Local order ID
                 'polymarket_order_id': polymarket_order_id,
                 'type': order_type,
