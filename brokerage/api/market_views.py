@@ -542,12 +542,21 @@ class MarketDetailView(APIView):
 
                 params = _price_history_params(request.query_params.get('period'))
                 price_history = adapter.get_price_history(token_id, params=params)
+                history = []
+                if isinstance(price_history, dict):
+                    history = price_history.get('history', [])
+                elif isinstance(price_history, (list, tuple)):
+                    history = [
+                        item.model_dump() if hasattr(item, 'model_dump') else getattr(item, 'dict', lambda: item)()
+                        for item in price_history
+                    ]
+
                 response = Response(
                     {
                         'token_id': token_id,
                         'outcome': outcome,
                         'period': request.query_params.get('period', '1D'),
-                        **price_history,
+                        'history': history,
                     },
                     status=status.HTTP_200_OK,
                 )
