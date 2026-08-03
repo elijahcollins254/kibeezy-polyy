@@ -81,9 +81,12 @@ class PolymarketDataClient:
         limit = request_params.pop('limit', None)
         offset = request_params.pop('offset', None)
         page_size = request_params.pop('page_size', 20)
+        active = request_params.pop('active', None)
+        if active is not None and 'closed' not in request_params:
+            request_params['closed'] = not bool(active)
         if limit is not None:
             try:
-                page_size = max(page_size, int(limit))
+                page_size = int(limit)
             except (TypeError, ValueError):
                 page_size = page_size
         with self._client() as client:

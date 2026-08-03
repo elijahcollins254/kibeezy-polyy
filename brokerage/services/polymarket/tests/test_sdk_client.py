@@ -121,6 +121,15 @@ def test_get_markets_accepts_limit_and_uses_page_size(patch_sdk):
     assert polymarket_client_module.PublicClient.instances[0].calls[0] == {"closed": False, "page_size": 20}
 
 
+def test_get_markets_translates_active_to_closed(patch_sdk):
+    client = polymarket_client_module.PolymarketClient()
+
+    markets = client.get_markets(params={"active": True})
+
+    assert markets[0]["id"] == "market-1"
+    assert polymarket_client_module.PublicClient.instances[0].calls[0] == {"closed": False, "page_size": 20}
+
+
 def test_place_limit_order_uses_official_secure_client(patch_sdk):
     client = polymarket_client_module.PolymarketClient(
         private_key="0x" + "a" * 64,
