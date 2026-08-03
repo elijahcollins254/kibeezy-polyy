@@ -76,6 +76,62 @@ class PolymarketDataClient:
             raise RuntimeError("polymarket-client is required")
         return PublicClient()
 
+    def _serialize_market(self, item: Any) -> Dict[str, Any]:
+        if item is None:
+            return {}
+
+        try:
+            payload = item.model_dump()
+        except Exception:
+            payload = {}
+
+        if not isinstance(payload, dict):
+            payload = {}
+
+        base_fields = {
+            "id": getattr(item, "id", None),
+            "slug": getattr(item, "slug", None),
+            "question": getattr(item, "question", None),
+            "title": getattr(item, "question", None),
+            "description": getattr(item, "description", None),
+            "category": getattr(item, "category", None),
+            "image": getattr(item, "image", None),
+            "icon": getattr(item, "icon", None),
+            "outcomes": getattr(item, "outcomes", None),
+            "metrics": getattr(item, "metrics", None),
+            "prices": getattr(item, "prices", None),
+            "state": getattr(item, "state", None),
+            "resolution": getattr(item, "resolution", None),
+            "sports": getattr(item, "sports", None),
+            "events": getattr(item, "events", None),
+            "tags": getattr(item, "tags", None),
+            "position_ids": getattr(item, "position_ids", None),
+        }
+        base_fields.update(payload)
+
+        outcome_data = getattr(item, "outcomes", None)
+        yes_outcome = getattr(outcome_data, "yes", None) if outcome_data is not None else None
+        no_outcome = getattr(outcome_data, "no", None) if outcome_data is not None else None
+        if isinstance(base_fields.get("outcomes"), dict):
+            yes_token_id = None
+            no_token_id = None
+            if isinstance(base_fields["outcomes"].get("yes"), dict):
+                yes_token_id = base_fields["outcomes"]["yes"].get("token_id")
+            if isinstance(base_fields["outcomes"].get("no"), dict):
+                no_token_id = base_fields["outcomes"]["no"].get("token_id")
+            base_fields["yes_token_id"] = yes_token_id
+            base_fields["no_token_id"] = no_token_id
+        else:
+            base_fields["yes_token_id"] = getattr(yes_outcome, "token_id", None)
+            base_fields["no_token_id"] = getattr(no_outcome, "token_id", None)
+
+        if base_fields.get("state") is not None and isinstance(base_fields.get("state"), dict):
+            base_fields["active"] = base_fields["state"].get("active")
+            base_fields["closed"] = base_fields["state"].get("closed")
+            base_fields["end_date"] = base_fields["state"].get("end_date")
+            base_fields["start_date"] = base_fields["state"].get("start_date")
+        return base_fields
+
     def get_markets(self, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         request_params = dict(params or {})
         limit = request_params.pop('limit', None)
@@ -117,35 +173,12 @@ class PolymarketDataClient:
                     except StopIteration:
                         break
 
-            return [
-                {
-                    "id": getattr(item, "id", None),
-                    "slug": getattr(item, "slug", None),
-                    "question": getattr(item, "question", None),
-                    "outcomes": {
-                        "yes": {
-                            "token_id": getattr(getattr(getattr(item, "outcomes", None), "yes", None), "token_id", None),
-                        }
-                    },
-                    "clob_token_ids": getattr(item, "clob_token_ids", None),
-                }
-                for item in fetched_items
-            ]
+            return [self._serialize_market(item) for item in fetched_items]
 
     def get_market(self, market_id: str) -> Dict[str, Any]:
         with self._client() as client:
             market = client.get_market(id=market_id)
-            return {
-                "id": getattr(market, "id", None),
-                "slug": getattr(market, "slug", None),
-                "question": getattr(market, "question", None),
-                "outcomes": {
-                    "yes": {
-                        "token_id": getattr(getattr(getattr(market, "outcomes", None), "yes", None), "token_id", None),
-                    }
-                },
-                "clob_token_ids": getattr(market, "clob_token_ids", None),
-            }
+            return self._serialize_market(market)
 
     def get_trade_history(self, market_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         with self._client() as client:
