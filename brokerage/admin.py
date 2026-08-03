@@ -3,6 +3,28 @@ from django.utils import timezone
 from . import models
 
 
+class MarketResolutionStatusFilter(admin.SimpleListFilter):
+    title = 'resolution status'
+    parameter_name = 'resolution_status'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('resolved', 'Resolved'),
+            ('closed', 'Closed'),
+            ('closed_or_resolved', 'Closed or Resolved'),
+        )
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == 'resolved':
+            return queryset.filter(polymarket_status='RESOLVED')
+        if value == 'closed':
+            return queryset.filter(polymarket_status='CLOSED')
+        if value == 'closed_or_resolved':
+            return queryset.filter(polymarket_status__in=['CLOSED', 'RESOLVED'])
+        return queryset
+
+
 @admin.register(models.Account)
 class AccountAdmin(admin.ModelAdmin):
     list_display = ('code', 'name')
@@ -45,7 +67,7 @@ class MarketSubcategoryAdmin(admin.ModelAdmin):
 @admin.register(models.Market)
 class MarketAdmin(admin.ModelAdmin):
     list_display = ('get_status', 'source', 'category', 'subcategory', 'category_obj', 'subcategory_obj', 'get_question', 'external_id', 'created_at', 'is_approved')
-    list_filter = ('is_approved', 'source', 'category', 'category_obj', 'subcategory', 'subcategory_obj', 'created_at')
+    list_filter = ('is_approved', 'source', 'category', 'category_obj', 'subcategory', 'subcategory_obj', 'created_at', MarketResolutionStatusFilter)
     search_fields = ('question', 'title', 'external_id', 'description', 'category', 'subcategory', 'category_obj__name', 'subcategory_obj__name')
     readonly_fields = ('external_id', 'created_at', 'approved_at')
     fieldsets = (
