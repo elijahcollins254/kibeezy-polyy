@@ -23,6 +23,51 @@ from brokerage.publish import publish_market_event
 logger = logging.getLogger(__name__)
 
 
+def build_polymarket_admin_payload(users, adapter=None):
+    """Build a compact Polymarket admin payload for all users."""
+    adapter = adapter or PolymarketAdapter()
+    payload = []
+
+    for user in users:
+        account_id = getattr(user, 'eth_address', None) or getattr(user, 'wallet_address', None) or str(getattr(user, 'id', ''))
+        try:
+            positions = adapter.get_positions(account_id) or []
+        except Exception:
+            positions = []
+
+        try:
+            balance = adapter.get_balance()
+        except Exception:
+            balance = None
+
+        payload.append({
+            'user': {
+                'id': getattr(user, 'id', None),
+                'name': getattr(user, 'full_name', None) or getattr(user, 'username', None) or '',
+                'username': getattr(user, 'username', None) or '',
+                'phone_number': getattr(user, 'phone_number', None) or '',
+            },
+            'account_id': account_id,
+            'balance': balance,
+            'positions': [
+                {
+                    'id': item.get('id') if isinstance(item, dict) else None,
+                    'market': item.get('market') if isinstance(item, dict) else None,
+                    'size': item.get('size') if isinstance(item, dict) else None,
+                    'token_id': item.get('token_id') if isinstance(item, dict) else None,
+                }
+                for item in positions
+            ],
+        })
+
+    return {
+        'balance': sum((item.get('balance') or 0) for item in payload if isinstance(item, dict)),
+        'total_positions': sum(len(item.get('positions', [])) for item in payload if isinstance(item, dict)),
+        'user_count': len(payload),
+        'positions': payload,
+    }
+
+
 def _parse_clob_token_ids(value):
     if not value:
         return []
@@ -764,6 +809,16 @@ class AdminBulkDeleteView(APIView):
         ids = request.data.get('market_ids') or []
         deleted_count = Market.objects.filter(id__in=ids).delete()[0]
         return Response({'deleted_count': deleted_count})
+
+
+class PolymarketAdminPositionsView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        users = get_user_model().objects.filter(is_active=True).order_by('id')
+        adapter = PolymarketAdapter()
+        payload = build_polymarket_admin_payload(users, adapter=adapter)
+        return Response(payload)
 
 
 class PolymarketSyncPreviewView(APIView):
