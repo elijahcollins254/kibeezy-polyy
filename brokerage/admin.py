@@ -61,7 +61,7 @@ class MarketAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
-    actions = ['approve_markets', 'reject_markets']
+    actions = ['approve_markets', 'reject_markets', 'delete_markets']
     
     def get_status(self, obj):
         if obj.is_approved:
@@ -100,6 +100,13 @@ class MarketAdmin(admin.ModelAdmin):
         count = queryset.filter(is_approved=True).update(is_approved=False, approved_at=None)
         self.message_user(request, f'{count} market(s) rejected.')
     reject_markets.short_description = '⊘ Reject selected markets'
+
+    def delete_markets(self, request, queryset):
+        """Delete selected markets without hitting the admin POST field limit."""
+        count = queryset.count()
+        queryset.delete()
+        self.message_user(request, f'{count} market(s) deleted successfully.')
+    delete_markets.short_description = '🗑 Delete selected markets'
 
 
 @admin.register(models.Position)
