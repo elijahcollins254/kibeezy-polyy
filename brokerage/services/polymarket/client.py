@@ -77,9 +77,43 @@ class PolymarketDataClient:
         return PublicClient()
 
     def get_markets(self, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        request_params = dict(params or {})
+        limit = request_params.pop('limit', None)
+        offset = request_params.pop('offset', None)
+        page_size = request_params.pop('page_size', 20)
+        if limit is not None:
+            try:
+                page_size = max(page_size, int(limit))
+            except (TypeError, ValueError):
+                page_size = page_size
         with self._client() as client:
-            paginator = client.list_markets(**(params or {}), page_size=20)
-            first_page = paginator.first_page()
+            paginator = client.list_markets(**request_params, page_size=page_size)
+            items = paginator.iter_items()
+            if offset is not None:
+                try:
+                    offset_value = int(offset)
+                except (TypeError, ValueError):
+                    offset_value = 0
+                for _ in range(max(offset_value, 0)):
+                    try:
+                        next(items)
+                    except StopIteration:
+                        break
+
+            fetched_items = []
+            if limit is None:
+                fetched_items = list(items)
+            else:
+                try:
+                    limit_value = int(limit)
+                except (TypeError, ValueError):
+                    limit_value = 0
+                for _ in range(max(limit_value, 0)):
+                    try:
+                        fetched_items.append(next(items))
+                    except StopIteration:
+                        break
+
             return [
                 {
                     "id": getattr(item, "id", None),
@@ -92,7 +126,7 @@ class PolymarketDataClient:
                     },
                     "clob_token_ids": getattr(item, "clob_token_ids", None),
                 }
-                for item in first_page.items
+                for item in fetched_items
             ]
 
     def get_market(self, market_id: str) -> Dict[str, Any]:

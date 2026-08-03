@@ -12,10 +12,16 @@ class DummyPaginator:
     def first_page(self):
         return SimpleNamespace(items=self._items)
 
+    def iter_items(self):
+        return iter(self._items)
+
 
 class DummyPublicClient:
+    instances = []
+
     def __init__(self):
         self.calls = []
+        type(self).instances.append(self)
 
     def __enter__(self):
         return self
@@ -101,6 +107,18 @@ def test_get_markets_uses_official_public_client(patch_sdk):
     assert markets[0]["id"] == "market-1"
     assert markets[0]["slug"] == "alpha-market"
     assert markets[0]["question"] == "Will it happen?"
+    assert polymarket_client_module.PublicClient.instances[0].calls[0] == {"closed": False, "page_size": 20}
+
+
+def test_get_markets_accepts_limit_and_uses_page_size(patch_sdk):
+    client = polymarket_client_module.PolymarketClient()
+
+    markets = client.get_markets(params={"closed": False, "limit": 1})
+
+    assert markets[0]["id"] == "market-1"
+    assert markets[0]["slug"] == "alpha-market"
+    assert markets[0]["question"] == "Will it happen?"
+    assert polymarket_client_module.PublicClient.instances[0].calls[0] == {"closed": False, "page_size": 20}
 
 
 def test_place_limit_order_uses_official_secure_client(patch_sdk):
