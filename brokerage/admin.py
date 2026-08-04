@@ -17,11 +17,23 @@ class MarketResolutionStatusFilter(admin.SimpleListFilter):
     def queryset(self, request, queryset):
         value = self.value()
         if value == 'resolved':
-            return queryset.filter(polymarket_status='RESOLVED')
+            return queryset.filter(
+                models.Q(polymarket_status='RESOLVED') |
+                models.Q(resolution_outcome__isnull=False) |
+                models.Q(resolved_at__isnull=False)
+            )
         if value == 'closed':
-            return queryset.filter(polymarket_status='CLOSED')
+            return queryset.filter(
+                models.Q(polymarket_status='CLOSED') |
+                models.Q(metadata__is_closed=True)
+            )
         if value == 'closed_or_resolved':
-            return queryset.filter(polymarket_status__in=['CLOSED', 'RESOLVED'])
+            return queryset.filter(
+                models.Q(polymarket_status__in=['CLOSED', 'RESOLVED']) |
+                models.Q(resolution_outcome__isnull=False) |
+                models.Q(resolved_at__isnull=False) |
+                models.Q(metadata__is_closed=True)
+            )
         return queryset
 
 
