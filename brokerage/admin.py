@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.db import Q
 from django.utils import timezone
 from . import models
 
@@ -18,21 +19,21 @@ class MarketResolutionStatusFilter(admin.SimpleListFilter):
         value = self.value()
         if value == 'resolved':
             return queryset.filter(
-                models.Q(polymarket_status='RESOLVED') |
-                models.Q(resolution_outcome__isnull=False) |
-                models.Q(resolved_at__isnull=False)
+                Q(polymarket_status='RESOLVED') |
+                Q(resolution_outcome__isnull=False) |
+                Q(resolved_at__isnull=False)
             )
         if value == 'closed':
             return queryset.filter(
-                models.Q(polymarket_status='CLOSED') |
-                models.Q(metadata__is_closed=True)
+                Q(polymarket_status='CLOSED') |
+                Q(metadata__is_closed=True)
             )
         if value == 'closed_or_resolved':
             return queryset.filter(
-                models.Q(polymarket_status__in=['CLOSED', 'RESOLVED']) |
-                models.Q(resolution_outcome__isnull=False) |
-                models.Q(resolved_at__isnull=False) |
-                models.Q(metadata__is_closed=True)
+                Q(polymarket_status__in=['CLOSED', 'RESOLVED']) |
+                Q(resolution_outcome__isnull=False) |
+                Q(resolved_at__isnull=False) |
+                Q(metadata__is_closed=True)
             )
         return queryset
 
