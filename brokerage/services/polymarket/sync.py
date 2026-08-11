@@ -25,11 +25,68 @@ def _is_category_match(market_data: Dict[str, Any], category: Optional[str]) -> 
 def fetch_polymarket_market_candidates(markets: List[Dict[str, Any]], limit: int = 50, category: Optional[str] = None) -> List[Dict[str, Any]]:
     candidates = []
     for market in markets:
-        if _is_category_match(market, category):
-            candidates.append(market)
+        # Only include markets that match the requested category
+        if not _is_category_match(market, category):
+            continue
+
+        # Only include markets that are open and still unresolved
+        def _is_open_and_unresolved(m: Dict[str, Any]) -> bool:
+            # Determine open state: explicit boolean or status string
+            is_open = False
+            if 'is_open' in m:
+                try:
+                    is_open = bool(m.get('is_open'))
+                except Exception:
+                    is_open = False
+
+            if not is_open:
+                status = (m.get('status') or m.get('market_status') or '')
+                if isinstance(status, str) and status.strip().lower() == 'open':
+                    is_open = True
+
+            if not is_open:
+                return False
+
+            # Treat presence of resolution fields as resolved
+            resolved_keys = ['resolution', 'resolved_outcome', 'resolution_outcome', 'resolved', 'isResolved', 'is_resolved']
+            for k in resolved_keys:
+                val = m.get(k)
+                if val:
+                    return False
+
+            # Also guard against explicit resolved status
+            status = (m.get('status') or m.get('market_status') or '')
+            if isinstance(status, str) and status.strip().lower() == 'resolved':
+                return False
+
+            return True
+
+        if _is_open_and_unresolved(market):
+            # Annotate the returned market dict to indicate its origin
+            candidate = dict(market) if isinstance(market, dict) else {'data': market}
+            candidate['source'] = 'polymarket'
+            candidates.append(_normalize_for_json(candidate))
             if len(candidates) >= limit:
                 break
     return candidates
+
+
+def _normalize_for_json(value: Any) -> Any:
+    from decimal import Decimal
+
+    if isinstance(value, Decimal):
+        try:
+            return float(value)
+        except Exception:
+            return str(value)
+
+    if isinstance(value, dict):
+        return {k: _normalize_for_json(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_normalize_for_json(v) for v in value]
+
+    return value
 
 
 @transaction.atomic
@@ -64,6 +121,10 @@ def sync_polymarket_markets(markets: List[Dict[str, Any]], limit: int = 50, cate
                 'is_approved': approval_value,
             },
         )
+        # Make absolutely sure the stored Market's source is polymarket
+        if getattr(obj, 'source', None) != 'polymarket':
+            obj.source = 'polymarket'
+            obj.save(update_fields=['source'])
         if created:
             created_count += 1
         if approval_value:

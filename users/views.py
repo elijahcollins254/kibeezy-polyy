@@ -229,6 +229,64 @@ def logout_view(request):
     return JsonResponse({'message': 'Logged out successfully'})
 
 
+@csrf_exempt
+@ensure_csrf_cookie
+@require_http_methods(["POST"])
+def admin_login_view(request):
+    """Admin login with username and password.
+    Requires user to have is_staff or is_superuser status."""
+    try:
+        data = json.loads(request.body)
+        username = data.get('username')
+        password = data.get('password')
+
+        if not all([username, password]):
+            return JsonResponse({'error': 'Missing credentials: username, password'}, status=400)
+
+        logger.info(f"Admin login attempt for username: {username}")
+        
+        # Try to authenticate with username
+        user = authenticate(request, username=username, password=password)
+        
+        if user is not None:
+            # Check if user has admin privileges
+            if not (user.is_staff or user.is_superuser):
+                logger.warning(f"Non-admin user attempted admin login: {username}")
+                return JsonResponse({'error': 'Insufficient privileges. Admin access required.'}, status=403)
+            
+            logger.info(f"Admin authenticated: {username}, User ID: {user.id}")
+            login(request, user)  # This sets the session cookie
+            request.session.save()
+            logger.info(f"Admin session established for {username}")
+            
+            csrf_token = get_token(request)
+            
+            response = JsonResponse({
+                'message': 'Admin login successful', 
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'full_name': user.full_name,
+                    'email': user.email,
+                    'phone_number': user.phone_number,
+                    'is_staff': user.is_staff,
+                    'is_superuser': user.is_superuser,
+                    'date_joined': user.date_joined.isoformat() if user.date_joined else None,
+                },
+                'csrf_token': csrf_token
+            })
+            return response
+        else:
+            logger.warning(f"Failed admin authentication for username: {username}")
+            return JsonResponse({'error': 'Invalid username or password'}, status=401)
+            
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        logger.error(f"Admin login error: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
+
+
 @require_http_methods(["POST"])
 def token_view(request):
     """Issue a JWT token for the currently authenticated session user.
