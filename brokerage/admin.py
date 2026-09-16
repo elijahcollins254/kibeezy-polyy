@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.db import Q
+from django.db.models import Q
 from django.utils import timezone
 from . import models
 
