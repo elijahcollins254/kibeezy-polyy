@@ -1,4 +1,3 @@
-from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 
@@ -6,6 +5,8 @@ from brokerage.services.polymarket.adapter import PolymarketAdapter
 from brokerage.models import Market
 from brokerage.utils.category import extract_category, extract_subcategory
 
+from datetime import datetime, date, time
+from decimal import Decimal
 
 def make_json_safe(value):
     """
@@ -13,10 +14,13 @@ def make_json_safe(value):
     into JSON-safe values.
 
     Decimal values are converted to strings to preserve financial
-    precision rather than converting them to floats.
+    precision. Datetime/date/time objects are converted to ISO strings.
     """
     if isinstance(value, Decimal):
         return str(value)
+
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
 
     if isinstance(value, dict):
         return {
